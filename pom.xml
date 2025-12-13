@@ -5,6 +5,7 @@
         <groupId>org.kill-bill.billing</groupId>
         <artifactId>killbill-oss-parent</artifactId>
         <version>0.146.63</version>
+        <relativePath/>
     </parent>
     <groupId>org.kill-bill.billing.plugin.java</groupId>
     <artifactId>toss-plugin</artifactId>
@@ -16,8 +17,8 @@
     <properties>
         <check.fail-spotbugs>true</check.fail-spotbugs>
         <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
-        <osgi.private>org.killbill.billing.plugin.toss.*</osgi.private>
         <osgi.export>org.killbill.billing.plugin.toss.api</osgi.export>
+        <osgi.private>org.killbill.billing.plugin.toss.*</osgi.private>
     </properties>
     <dependencies>
         <dependency>
@@ -61,15 +62,11 @@
             <artifactId>killbill-base-plugin</artifactId>
         </dependency>
         <dependency>
-            <groupId>javax.servlet</groupId>
-            <artifactId>javax.servlet-api</artifactId>
+            <groupId>org.kill-bill.commons</groupId>
+            <artifactId>killbill-clock</artifactId>
             <scope>provided</scope>
         </dependency>
-        <dependency>
-            <groupId>org.osgi</groupId>
-            <artifactId>org.osgi.core</artifactId>
-            <scope>provided</scope>
-        </dependency>
+
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
@@ -92,6 +89,13 @@
                     <instructions>
                         <Bundle-Activator>org.killbill.billing.plugin.toss.TossActivator</Bundle-Activator>
                     </instructions>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <configuration>
+                    <failOnWarning>false</failOnWarning>
                 </configuration>
             </plugin>
         </plugins>

@@ -7,28 +7,36 @@ import java.util.Properties;
 import java.util.UUID;
 
 import org.killbill.billing.catalog.api.Currency;
+import org.killbill.billing.osgi.libs.killbill.OSGIConfigPropertiesService;
 import org.killbill.billing.osgi.libs.killbill.OSGIKillbillAPI;
 import org.killbill.billing.payment.api.PaymentMethodPlugin;
 import org.killbill.billing.payment.api.PluginProperty;
 import org.killbill.billing.payment.plugin.api.GatewayNotification;
 import org.killbill.billing.payment.plugin.api.HostedPaymentPageFormDescriptor;
 import org.killbill.billing.payment.plugin.api.PaymentMethodInfoPlugin;
-import org.killbill.billing.payment.plugin.api.PaymentPluginApi;
 import org.killbill.billing.payment.plugin.api.PaymentPluginApiException;
-import org.killbill.billing.payment.plugin.api.PaymentPluginStatus;
 import org.killbill.billing.payment.plugin.api.PaymentTransactionInfoPlugin;
+import org.killbill.billing.plugin.api.payment.PluginPaymentPluginApi;
+import org.killbill.billing.plugin.toss.dao.TossDao;
+import org.killbill.billing.plugin.toss.dao.gen.tables.TossPaymentMethods;
+import org.killbill.billing.plugin.toss.dao.gen.tables.TossResponses;
+import org.killbill.billing.plugin.toss.dao.gen.tables.records.TossPaymentMethodsRecord;
+import org.killbill.billing.plugin.toss.dao.gen.tables.records.TossResponsesRecord;
 import org.killbill.billing.util.callcontext.CallContext;
 import org.killbill.billing.util.callcontext.TenantContext;
 import org.killbill.billing.util.entity.Pagination;
+import org.killbill.clock.Clock;
 
-public class TossPaymentPluginApi implements PaymentPluginApi {
+public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRecord, TossResponses, TossPaymentMethodsRecord, TossPaymentMethods> {
 
-    private final OSGIKillbillAPI killbillAPI;
-    private final Properties properties;
+    private final TossDao dao;
 
-    public TossPaymentPluginApi(final OSGIKillbillAPI killbillAPI, final Properties properties) {
-        this.killbillAPI = killbillAPI;
-        this.properties = properties;
+    public TossPaymentPluginApi(final OSGIKillbillAPI killbillAPI,
+                                final OSGIConfigPropertiesService configProperties,
+                                final Clock clock,
+                                final TossDao dao) {
+        super(killbillAPI, configProperties, clock, dao);
+        this.dao = dao;
     }
 
     @Override
@@ -118,5 +126,25 @@ public class TossPaymentPluginApi implements PaymentPluginApi {
     @Override
     public GatewayNotification processNotification(final String notification, final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
         return null;
+    }
+
+    @Override
+    protected PaymentTransactionInfoPlugin buildPaymentTransactionInfoPlugin(TossResponsesRecord record) {
+        return null; // TODO: Implement
+    }
+
+    @Override
+    protected PaymentMethodPlugin buildPaymentMethodPlugin(TossPaymentMethodsRecord record) {
+        return null; // TODO: Implement
+    }
+
+    @Override
+    protected PaymentMethodInfoPlugin buildPaymentMethodInfoPlugin(TossPaymentMethodsRecord record) {
+        return null; // TODO: Implement
+    }
+
+    @Override
+    protected String getPaymentMethodId(TossPaymentMethodsRecord record) {
+        return null; // TODO: Implement
     }
 }

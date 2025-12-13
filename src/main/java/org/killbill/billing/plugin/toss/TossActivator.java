@@ -5,17 +5,25 @@ import java.util.Hashtable;
 import org.killbill.billing.osgi.api.OSGIPluginProperties;
 import org.killbill.billing.osgi.libs.killbill.KillbillActivatorBase;
 import org.killbill.billing.payment.plugin.api.PaymentPluginApi;
+import org.killbill.billing.plugin.toss.dao.TossDao;
 import org.osgi.framework.BundleContext;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class TossActivator extends KillbillActivatorBase {
+
+    private static final Logger logger = LoggerFactory.getLogger(TossActivator.class);
 
     public static final String PLUGIN_NAME = "killbill-toss";
 
     @Override
-    public void start(final BundleContext context) {
+    public void start(final BundleContext context) throws Exception {
         super.start(context);
+        logger.info("TossPluginActivator starting");
 
-        final TossPaymentPluginApi api = new TossPaymentPluginApi(killbillAPI, configProperties.getProperties());
+        final TossDao dao = new TossDao(dataSource.getDataSource());
+        final TossPaymentPluginApi api = new TossPaymentPluginApi(killbillAPI, configProperties, clock.getClock(), dao);
         registerPaymentPluginApi(context, api);
     }
 
