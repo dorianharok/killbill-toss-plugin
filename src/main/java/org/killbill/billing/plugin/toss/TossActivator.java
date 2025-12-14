@@ -5,6 +5,7 @@ import java.util.Hashtable;
 import org.killbill.billing.osgi.api.OSGIPluginProperties;
 import org.killbill.billing.osgi.libs.killbill.KillbillActivatorBase;
 import org.killbill.billing.payment.plugin.api.PaymentPluginApi;
+import org.killbill.billing.plugin.toss.core.TossConfigurationHandler;
 import org.killbill.billing.plugin.toss.dao.TossDao;
 import org.osgi.framework.BundleContext;
 
@@ -17,14 +18,22 @@ public class TossActivator extends KillbillActivatorBase {
 
     public static final String PLUGIN_NAME = "killbill-toss";
 
+    private TossConfigurationHandler configurationHandler;
+
     @Override
     public void start(final BundleContext context) throws Exception {
         super.start(context);
         logger.info("TossPluginActivator starting");
 
+        // Initialize configuration handler
+        configurationHandler = new TossConfigurationHandler(PLUGIN_NAME, killbillAPI);
+        configurationHandler.setDefaultConfigurable(configProperties.getProperties());
+
         final TossDao dao = new TossDao(dataSource.getDataSource());
-        final TossPaymentPluginApi api = new TossPaymentPluginApi(killbillAPI, configProperties, clock.getClock(), dao);
+        final TossPaymentPluginApi api = new TossPaymentPluginApi(killbillAPI, configProperties, clock.getClock(), dao, configurationHandler);
         registerPaymentPluginApi(context, api);
+
+        logger.info("TossPluginActivator started with configuration handler");
     }
 
     private void registerPaymentPluginApi(final BundleContext context, final PaymentPluginApi api) {

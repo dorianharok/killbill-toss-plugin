@@ -17,6 +17,8 @@ import org.killbill.billing.payment.plugin.api.PaymentMethodInfoPlugin;
 import org.killbill.billing.payment.plugin.api.PaymentPluginApiException;
 import org.killbill.billing.payment.plugin.api.PaymentTransactionInfoPlugin;
 import org.killbill.billing.plugin.api.payment.PluginPaymentPluginApi;
+import org.killbill.billing.plugin.toss.core.TossConfig;
+import org.killbill.billing.plugin.toss.core.TossConfigurationHandler;
 import org.killbill.billing.plugin.toss.dao.TossDao;
 import org.killbill.billing.plugin.toss.dao.gen.tables.TossPaymentMethods;
 import org.killbill.billing.plugin.toss.dao.gen.tables.TossResponses;
@@ -30,13 +32,26 @@ import org.killbill.clock.Clock;
 public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRecord, TossResponses, TossPaymentMethodsRecord, TossPaymentMethods> {
 
     private final TossDao dao;
+    private final TossConfigurationHandler configurationHandler;
 
     public TossPaymentPluginApi(final OSGIKillbillAPI killbillAPI,
                                 final OSGIConfigPropertiesService configProperties,
                                 final Clock clock,
-                                final TossDao dao) {
+                                final TossDao dao,
+                                final TossConfigurationHandler configurationHandler) {
         super(killbillAPI, configProperties, clock, dao);
         this.dao = dao;
+        this.configurationHandler = configurationHandler;
+    }
+
+    /**
+     * Get the Toss configuration for a specific tenant.
+     *
+     * @param context tenant context
+     * @return TossConfig for the given tenant
+     */
+    protected TossConfig getConfigForTenant(final TenantContext context) {
+        return configurationHandler.getConfigurable(context.getTenantId());
     }
 
     @Override
