@@ -17,7 +17,7 @@ import org.killbill.billing.payment.plugin.api.PaymentMethodInfoPlugin;
 import org.killbill.billing.payment.plugin.api.PaymentPluginApiException;
 import org.killbill.billing.payment.plugin.api.PaymentTransactionInfoPlugin;
 import org.killbill.billing.plugin.api.payment.PluginPaymentPluginApi;
-import org.killbill.billing.plugin.toss.core.TossConfig;
+import org.killbill.billing.plugin.toss.core.TossConfigProperties;
 import org.killbill.billing.plugin.toss.core.TossConfigurationHandler;
 import org.killbill.billing.plugin.toss.dao.TossDao;
 import org.killbill.billing.plugin.toss.dao.gen.tables.TossPaymentMethods;
@@ -48,9 +48,9 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
      * Get the Toss configuration for a specific tenant.
      *
      * @param context tenant context
-     * @return TossConfig for the given tenant
+     * @return TossConfigProperties for the given tenant
      */
-    protected TossConfig getConfigForTenant(final TenantContext context) {
+    protected TossConfigProperties getConfigForTenant(final TenantContext context) {
         return configurationHandler.getConfigurable(context.getTenantId());
     }
 

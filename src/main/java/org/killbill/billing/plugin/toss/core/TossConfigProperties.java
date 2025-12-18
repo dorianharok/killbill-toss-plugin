@@ -27,9 +27,9 @@ import org.slf4j.LoggerFactory;
  * Reads configuration from killbill.properties or per-tenant configuration.
  * Secret keys are masked in toString() to prevent accidental logging.
  */
-public class TossConfig {
+public class TossConfigProperties {
 
-    private static final Logger logger = LoggerFactory.getLogger(TossConfig.class);
+    private static final Logger logger = LoggerFactory.getLogger(TossConfigProperties.class);
     private static final String PROPERTY_PREFIX = "org.killbill.billing.plugin.toss.";
 
     /** Default connection timeout in milliseconds */
@@ -44,11 +44,11 @@ public class TossConfig {
     private final boolean testMode;
 
     /**
-     * Creates a TossConfig from the given properties.
+     * Creates a TossConfigProperties from the given properties.
      *
      * @param properties Configuration properties with keys prefixed by "org.killbill.billing.plugin.toss."
      */
-    public TossConfig(final Properties properties) {
+    public TossConfigProperties(final Properties properties) {
         this.secretKey = properties.getProperty(PROPERTY_PREFIX + "secret_key");
         this.connectionTimeout = parseIntProperty(properties, "connection_timeout", DEFAULT_CONNECTION_TIMEOUT);
         this.readTimeout = parseIntProperty(properties, "read_timeout", DEFAULT_READ_TIMEOUT);
@@ -104,7 +104,7 @@ public class TossConfig {
 
     @Override
     public String toString() {
-        return "TossConfig{" +
+        return "TossConfigProperties{" +
                 "secretKey=" + maskSecretKey(secretKey) +
                 ", connectionTimeout=" + connectionTimeout +
                 ", readTimeout=" + readTimeout +

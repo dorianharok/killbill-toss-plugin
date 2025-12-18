@@ -28,14 +28,14 @@ import org.killbill.billing.plugin.api.notification.PluginTenantConfigurableConf
  * Kill Bill's OSGi framework automatically handles TENANT_CONFIG_CHANGE and
  * TENANT_CONFIG_DELETION events to reload configuration.
  */
-public class TossConfigurationHandler extends PluginTenantConfigurableConfigurationHandler<TossConfig> {
+public class TossConfigurationHandler extends PluginTenantConfigurableConfigurationHandler<TossConfigProperties> {
 
     public TossConfigurationHandler(final String pluginName, final OSGIKillbillAPI osgiKillbillAPI) {
         super(pluginName, osgiKillbillAPI);
     }
 
     @Override
-    protected TossConfig createConfigurable(final Properties properties) {
-        return new TossConfig(properties);
+    protected TossConfigProperties createConfigurable(final Properties properties) {
+        return new TossConfigProperties(properties);
     }
 }

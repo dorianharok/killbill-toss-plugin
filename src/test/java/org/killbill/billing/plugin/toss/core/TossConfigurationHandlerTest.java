@@ -44,7 +44,7 @@ public class TossConfigurationHandlerTest {
         properties.setProperty(PROPERTY_PREFIX + "secret_key", "test_sk_handler123");
         properties.setProperty(PROPERTY_PREFIX + "connection_timeout", "7000");
 
-        final TossConfig config = handler.createConfigurable(properties);
+        final TossConfigProperties config = handler.createConfigurable(properties);
 
         Assert.assertNotNull(config);
         Assert.assertEquals(config.getSecretKey(), "test_sk_handler123");
@@ -55,12 +55,12 @@ public class TossConfigurationHandlerTest {
     public void testCreateConfigurableWithEmptyProperties() {
         final Properties properties = new Properties();
 
-        final TossConfig config = handler.createConfigurable(properties);
+        final TossConfigProperties config = handler.createConfigurable(properties);
 
         Assert.assertNotNull(config);
         Assert.assertNull(config.getSecretKey());
-        Assert.assertEquals(config.getConnectionTimeout(), TossConfig.DEFAULT_CONNECTION_TIMEOUT);
-        Assert.assertEquals(config.getReadTimeout(), TossConfig.DEFAULT_READ_TIMEOUT);
+        Assert.assertEquals(config.getConnectionTimeout(), TossConfigProperties.DEFAULT_CONNECTION_TIMEOUT);
+        Assert.assertEquals(config.getReadTimeout(), TossConfigProperties.DEFAULT_READ_TIMEOUT);
     }
 
     @Test(groups = "fast")

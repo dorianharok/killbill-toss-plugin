@@ -21,7 +21,7 @@ import java.util.Properties;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
-public class TossConfigTest {
+public class TossConfigPropertiesTest {
 
     private static final String PROPERTY_PREFIX = "org.killbill.billing.plugin.toss.";
 
@@ -33,7 +33,7 @@ public class TossConfigTest {
         properties.setProperty(PROPERTY_PREFIX + "read_timeout", "4000");
         properties.setProperty(PROPERTY_PREFIX + "test_mode", "true");
 
-        final TossConfig config = new TossConfig(properties);
+        final TossConfigProperties config = new TossConfigProperties(properties);
 
         Assert.assertEquals(config.getSecretKey(), "test_sk_abc123");
         Assert.assertEquals(config.getConnectionTimeout(), 3000);
@@ -45,18 +45,18 @@ public class TossConfigTest {
     public void testConfigWithDefaultValues() {
         final Properties properties = new Properties();
 
-        final TossConfig config = new TossConfig(properties);
+        final TossConfigProperties config = new TossConfigProperties(properties);
 
         Assert.assertNull(config.getSecretKey());
-        Assert.assertEquals(config.getConnectionTimeout(), TossConfig.DEFAULT_CONNECTION_TIMEOUT);
-        Assert.assertEquals(config.getReadTimeout(), TossConfig.DEFAULT_READ_TIMEOUT);
+        Assert.assertEquals(config.getConnectionTimeout(), TossConfigProperties.DEFAULT_CONNECTION_TIMEOUT);
+        Assert.assertEquals(config.getReadTimeout(), TossConfigProperties.DEFAULT_READ_TIMEOUT);
         Assert.assertFalse(config.isTestMode());
     }
 
     @Test(groups = "fast")
     public void testConfigDefaultTimeoutValues() {
-        Assert.assertEquals(TossConfig.DEFAULT_CONNECTION_TIMEOUT, 5000);
-        Assert.assertEquals(TossConfig.DEFAULT_READ_TIMEOUT, 5000);
+        Assert.assertEquals(TossConfigProperties.DEFAULT_CONNECTION_TIMEOUT, 5000);
+        Assert.assertEquals(TossConfigProperties.DEFAULT_READ_TIMEOUT, 5000);
     }
 
     @Test(groups = "fast")
@@ -64,7 +64,7 @@ public class TossConfigTest {
         final Properties properties = new Properties();
         properties.setProperty(PROPERTY_PREFIX + "secret_key", "test_sk_very_secret_key_12345");
 
-        final TossConfig config = new TossConfig(properties);
+        final TossConfigProperties config = new TossConfigProperties(properties);
         final String toString = config.toString();
 
         Assert.assertFalse(toString.contains("test_sk_very_secret_key_12345"),
@@ -79,7 +79,7 @@ public class TossConfigTest {
     public void testToStringWithNullSecretKey() {
         final Properties properties = new Properties();
 
-        final TossConfig config = new TossConfig(properties);
+        final TossConfigProperties config = new TossConfigProperties(properties);
         final String toString = config.toString();
 
         Assert.assertNotNull(toString);
@@ -92,11 +92,11 @@ public class TossConfigTest {
         properties.setProperty(PROPERTY_PREFIX + "secret_key", "test_sk_partial");
         // connection_timeout and read_timeout not set
 
-        final TossConfig config = new TossConfig(properties);
+        final TossConfigProperties config = new TossConfigProperties(properties);
 
         Assert.assertEquals(config.getSecretKey(), "test_sk_partial");
-        Assert.assertEquals(config.getConnectionTimeout(), TossConfig.DEFAULT_CONNECTION_TIMEOUT);
-        Assert.assertEquals(config.getReadTimeout(), TossConfig.DEFAULT_READ_TIMEOUT);
+        Assert.assertEquals(config.getConnectionTimeout(), TossConfigProperties.DEFAULT_CONNECTION_TIMEOUT);
+        Assert.assertEquals(config.getReadTimeout(), TossConfigProperties.DEFAULT_READ_TIMEOUT);
         Assert.assertFalse(config.isTestMode());
     }
 
@@ -105,17 +105,17 @@ public class TossConfigTest {
         // Test "true" string
         Properties properties = new Properties();
         properties.setProperty(PROPERTY_PREFIX + "test_mode", "true");
-        Assert.assertTrue(new TossConfig(properties).isTestMode());
+        Assert.assertTrue(new TossConfigProperties(properties).isTestMode());
 
         // Test "false" string
         properties = new Properties();
         properties.setProperty(PROPERTY_PREFIX + "test_mode", "false");
-        Assert.assertFalse(new TossConfig(properties).isTestMode());
+        Assert.assertFalse(new TossConfigProperties(properties).isTestMode());
 
         // Test invalid value defaults to false
         properties = new Properties();
         properties.setProperty(PROPERTY_PREFIX + "test_mode", "invalid");
-        Assert.assertFalse(new TossConfig(properties).isTestMode());
+        Assert.assertFalse(new TossConfigProperties(properties).isTestMode());
     }
 
     @Test(groups = "fast")
@@ -125,11 +125,11 @@ public class TossConfigTest {
         properties.setProperty(PROPERTY_PREFIX + "connection_timeout", "5000ms");
         properties.setProperty(PROPERTY_PREFIX + "read_timeout", "invalid");
 
-        final TossConfig config = new TossConfig(properties);
+        final TossConfigProperties config = new TossConfigProperties(properties);
 
         // Should fall back to defaults and log warning
-        Assert.assertEquals(config.getConnectionTimeout(), TossConfig.DEFAULT_CONNECTION_TIMEOUT);
-        Assert.assertEquals(config.getReadTimeout(), TossConfig.DEFAULT_READ_TIMEOUT);
+        Assert.assertEquals(config.getConnectionTimeout(), TossConfigProperties.DEFAULT_CONNECTION_TIMEOUT);
+        Assert.assertEquals(config.getReadTimeout(), TossConfigProperties.DEFAULT_READ_TIMEOUT);
     }
 
     @Test(groups = "fast")
@@ -138,7 +138,7 @@ public class TossConfigTest {
         // 8 characters or less should be fully masked
         properties.setProperty(PROPERTY_PREFIX + "secret_key", "short123");
 
-        final TossConfig config = new TossConfig(properties);
+        final TossConfigProperties config = new TossConfigProperties(properties);
         final String toString = config.toString();
 
         Assert.assertTrue(toString.contains("[MASKED]"),
