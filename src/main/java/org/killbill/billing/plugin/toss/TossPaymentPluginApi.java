@@ -3,7 +3,6 @@ package org.killbill.billing.plugin.toss;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
-import java.util.Properties;
 import java.util.UUID;
 
 import org.killbill.billing.catalog.api.Currency;

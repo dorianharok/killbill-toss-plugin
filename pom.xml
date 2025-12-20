@@ -84,6 +84,14 @@
             <artifactId>testng</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <dependency>
+            <groupId>org.kill-bill.billing.plugin.java</groupId>
+            <artifactId>killbill-base-plugin</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
     <build>
         <plugins>
