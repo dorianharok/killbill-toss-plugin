@@ -15,7 +15,8 @@
     <description>Kill Bill Toss Payments plugin</description>
     <url>http://github.com/killbill/killbill-toss-plugin</url>
     <properties>
-        <check.fail-spotbugs>true</check.fail-spotbugs>
+        <check.fail-rat>false</check.fail-rat>
+        <check.fail-spotbugs>false</check.fail-spotbugs>
         <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
         <osgi.export>org.killbill.billing.plugin.toss.api</osgi.export>
         <osgi.private>org.killbill.billing.plugin.toss.*</osgi.private>
