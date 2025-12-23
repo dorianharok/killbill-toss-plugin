@@ -5,7 +5,7 @@ import java.util.Hashtable;
 import org.killbill.billing.osgi.api.OSGIPluginProperties;
 import org.killbill.billing.osgi.libs.killbill.KillbillActivatorBase;
 import org.killbill.billing.payment.plugin.api.PaymentPluginApi;
-import org.killbill.billing.plugin.toss.TossPaymentPluginApi;
+import org.killbill.billing.plugin.toss.api.TossPaymentPluginApi;
 import org.killbill.billing.plugin.toss.client.TossClient;
 import org.killbill.billing.plugin.toss.client.TossClientImpl;
 import org.killbill.billing.plugin.toss.dao.TossDao;
