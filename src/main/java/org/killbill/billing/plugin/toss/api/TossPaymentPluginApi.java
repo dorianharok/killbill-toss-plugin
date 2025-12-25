@@ -246,9 +246,9 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             throw new PaymentPluginApiException("REFUND_ERROR", "Original payment not found for kbPaymentId=" + kbPaymentId);
         }
 
-        if (!"DONE".equals(previousRecord.getTossPaymentStatus())) {
+        if (!"DONE".equals(previousRecord.getTossPaymentStatus()) && !"PARTIAL_CANCELED".equals(previousRecord.getTossPaymentStatus())) {
             logger.error("Cannot refund payment with status {}: kbPaymentId={}", previousRecord.getTossPaymentStatus(), kbPaymentId);
-            throw new PaymentPluginApiException("REFUND_ERROR", "Original payment is not in DONE status, current status=" + previousRecord.getTossPaymentStatus());
+            throw new PaymentPluginApiException("REFUND_ERROR", "Original payment is not in DONE or PARTIAL_CANCELED status, current status=" + previousRecord.getTossPaymentStatus());
         }
 
         if (amount != null) {
@@ -551,12 +551,12 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
         }
 
         switch (tossStatus) {
-            case "DONE":
-                return PaymentPluginStatus.PROCESSED;
             case "IN_PROGRESS":
             case "WAITING_FOR_DEPOSIT":
-            case "PARTIAL_CANCELED":
                 return PaymentPluginStatus.PENDING;
+            case "PARTIAL_CANCELED":
+            case "DONE":
+                return PaymentPluginStatus.PROCESSED;
             case "CANCELED":
             case "ABORTED":
                 return PaymentPluginStatus.CANCELED;
