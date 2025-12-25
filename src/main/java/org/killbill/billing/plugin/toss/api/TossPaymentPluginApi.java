@@ -85,17 +85,17 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
     public PaymentTransactionInfoPlugin purchasePayment(final UUID kbAccountId, final UUID kbPaymentId, final UUID kbTransactionId, final UUID kbPaymentMethodId, final BigDecimal amount, final Currency currency, final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
         logger.info("purchasePayment called: kbPaymentId={}, amount={}, currency={}", kbPaymentId, amount, currency);
 
+        String paymentKey = null;
         try {
             // Extract Toss parameters from plugin properties
-            final String paymentKey = PluginProperties.findPluginPropertyValue("paymentKey", properties);
+            paymentKey = PluginProperties.findPluginPropertyValue("paymentKey", properties);
             if (paymentKey == null) {
                 throw new PaymentPluginApiException("ERROR", "Missing required property: paymentKey");
             }
 
             final String orderId = PluginProperties.getValue("orderId", kbPaymentId.toString(), properties);
 
-            final Long tossAmount = amount.multiply(BigDecimal.valueOf(100))
-                    .longValue(); // Convert to cents/won
+            final Long tossAmount = amount.longValue(); // Toss uses integer won (KRW), not cents
 
             // Get tenant configuration
             final TossConfigProperties config = getConfigForTenant(context);
@@ -115,19 +115,42 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                     tossPayment
             );
 
-            // Save to database (will be implemented in Task 3)
-            // dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, transactionType, amount, currency, tossPayment, context);
+            // Save to database
+            try {
+                dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, paymentKey, tossPayment, null, clock.getUTCNow(), context.getTenantId());
+            } catch (final Exception dbError) {
+                logger.error("Failed to save response to database", dbError);
+                throw new PaymentPluginApiException("Failed to save payment response to database: " + dbError.getMessage(), dbError);
+            }
 
             logger.info("purchasePayment succeeded: paymentKey={}, status={}", paymentKey, tossPayment.getStatus());
             return response;
 
         } catch (final TossApplicationException e) {
             logger.error("Toss API error: code={}, message={}", e.getTossError().getCode(), e.getTossError().getMessage());
-            return buildErrorResponse(kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, e);
+            final PaymentTransactionInfoPlugin errorResponse = buildErrorResponse(kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, e);
+
+            // Save error to database
+            try {
+                dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, paymentKey, null, e, clock.getUTCNow(), context.getTenantId());
+            } catch (final Exception dbError) {
+                logger.error("Failed to save error response to database", dbError);
+                // Don't throw here - we already have the payment error to return
+            }
+
+            return errorResponse;
 
         } catch (final IOException | InterruptedException e) {
             logger.error("Network error during payment confirmation", e);
-            return buildPendingResponse(kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, e);
+            final PaymentTransactionInfoPlugin pendingResponse = buildPendingResponse(kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, paymentKey, e);
+
+            try {
+                dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, paymentKey, null, null, clock.getUTCNow(), context.getTenantId());
+            } catch (final Exception dbError) {
+                logger.error("Failed to save pending response to database", dbError);
+            }
+
+            return pendingResponse;
         }
     }
 
@@ -153,16 +176,46 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
     public List<PaymentTransactionInfoPlugin> getPaymentInfo(final UUID kbAccountId, final UUID kbPaymentId, final Iterable<PluginProperty> properties, final TenantContext context) throws PaymentPluginApiException {
         logger.info("getPaymentInfo called: kbPaymentId={}", kbPaymentId);
 
-        try {
-            // Try to get paymentKey from plugin properties
-            final String paymentKey = PluginProperties.findPluginPropertyValue("paymentKey", properties);
+        // 1. Get existing transactions to find the correct kbTransactionId
+        final List<PaymentTransactionInfoPlugin> transactions = super.getPaymentInfo(kbAccountId, kbPaymentId, properties, context);
+        if (transactions.isEmpty()) {
+            return transactions;
+        }
 
-            if (paymentKey == null) {
-                // If no paymentKey provided, try to get from database (will be implemented in Task 3)
-                logger.warn("No paymentKey provided in properties for kbPaymentId={}", kbPaymentId);
-                return Collections.emptyList();
+        // 2. Filter for PENDING or UNDEFINED transactions that need update
+        // Simple implementation: try to update the latest transaction if it's not final
+        final PaymentTransactionInfoPlugin lastTransaction = transactions.get(transactions.size() - 1);
+        if (lastTransaction.getStatus() == PaymentPluginStatus.PROCESSED || lastTransaction.getStatus() == PaymentPluginStatus.CANCELED || lastTransaction.getStatus() == PaymentPluginStatus.ERROR) {
+            // Already final, return as is
+            return transactions;
+        }
+
+        final UUID kbTransactionId = lastTransaction.getKbTransactionPaymentId();
+        String paymentKey = PluginProperties.findPluginPropertyValue("paymentKey", properties);
+        
+        // If not in properties, try to get from the transaction info
+        if (paymentKey == null) {
+            paymentKey = lastTransaction.getFirstPaymentReferenceId();
+        }
+
+        // If still null, try database
+        if (paymentKey == null) {
+             try {
+                final TossResponsesRecord dbRecord = dao.getResponseByPaymentId(kbPaymentId, context.getTenantId());
+                if (dbRecord != null) {
+                    paymentKey = dbRecord.getPaymentKey();
+                }
+            } catch (final Exception e) {
+                logger.warn("Failed to retrieve paymentKey from DB", e);
             }
+        }
 
+        if (paymentKey == null) {
+            logger.warn("Could not find paymentKey for kbPaymentId={}, cannot sync with Toss", kbPaymentId);
+            return transactions;
+        }
+
+        try {
             // Get tenant configuration
             final TossConfigProperties config = getConfigForTenant(context);
             final String secretKey = config.getSecretKey();
@@ -170,28 +223,41 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             // Call Toss API to get latest payment status
             final TossPayment tossPayment = tossClient.getPayment(secretKey, paymentKey);
 
-            // Build response
+            // Build response with CORRECT kbTransactionId
             final PaymentTransactionInfoPlugin response = buildPaymentTransactionInfo(
                     kbPaymentId,
-                    null, // kbTransactionId not available here
-                    TransactionType.PURCHASE, // Assume PURCHASE for now
-                    BigDecimal.valueOf(tossPayment.getTotalAmount()).divide(BigDecimal.valueOf(100)),
+                    kbTransactionId, // Use existing transaction ID
+                    lastTransaction.getTransactionType(),
+                    BigDecimal.valueOf(tossPayment.getTotalAmount()),
                     Currency.valueOf(tossPayment.getCurrency()),
                     tossPayment
             );
 
-            logger.info("getPaymentInfo succeeded: paymentKey={}, status={}", paymentKey, tossPayment.getStatus());
-            return Collections.singletonList(response);
+            // Update database with latest status from Toss
+            try {
+                dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, lastTransaction.getTransactionType(),
+                               BigDecimal.valueOf(tossPayment.getTotalAmount()),
+                               Currency.valueOf(tossPayment.getCurrency()), paymentKey, tossPayment, null, clock.getUTCNow(), context.getTenantId());
+            } catch (final Exception dbError) {
+                logger.error("Failed to update payment status in database", dbError);
+            }
+
+            logger.info("getPaymentInfo synced: paymentKey={}, status={}", paymentKey, tossPayment.getStatus());
+            
+            // Return mutable list with updated transaction
+            final List<PaymentTransactionInfoPlugin> updatedTransactions = new java.util.ArrayList<>(transactions);
+            updatedTransactions.set(transactions.size() - 1, response);
+            return updatedTransactions;
 
         } catch (final TossApplicationException e) {
-            logger.error("Toss API error in getPaymentInfo: code={}, message={}",
-                    e.getTossError().getCode(), e.getTossError().getMessage());
-            return Collections.emptyList();
-
+            logger.error("Toss API error in getPaymentInfo: code={}, message={}", e.getTossError().getCode(), e.getTossError().getMessage());
+            // TODO: Map to error status if needed
         } catch (final IOException | InterruptedException e) {
             logger.error("Network error in getPaymentInfo", e);
-            return Collections.emptyList();
         }
+
+        // If sync failed, return existing transactions
+        return transactions;
     }
 
     @Override
@@ -244,7 +310,10 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
 
     @Override
     protected PaymentTransactionInfoPlugin buildPaymentTransactionInfoPlugin(TossResponsesRecord record) {
-        return null; // TODO: Implement
+        if (record == null) {
+            return null;
+        }
+        return buildPaymentTransactionInfoFromRecord(UUID.fromString(record.getKbPaymentId()), record);
     }
 
     @Override
@@ -272,7 +341,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                                                                       final Currency currency,
                                                                       final TossPayment tossPayment) {
         final PaymentPluginStatus status = mapTossStatusToKillBill(tossPayment.getStatus());
-        final DateTime now = DateTime.now();
+        final DateTime now = clock.getUTCNow();
 
         return new TossPaymentTransactionInfoPlugin(
                 kbPaymentId,
@@ -301,7 +370,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                                                             final Currency currency,
                                                             final TossApplicationException e) {
         final PaymentPluginStatus status = mapTossErrorToStatus(e);
-        final DateTime now = DateTime.now();
+        final DateTime now = clock.getUTCNow();
 
         return new TossPaymentTransactionInfoPlugin(
                 kbPaymentId,
@@ -328,8 +397,9 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                                                               final TransactionType transactionType,
                                                               final BigDecimal amount,
                                                               final Currency currency,
+                                                              final String paymentKey, // Add paymentKey
                                                               final Exception e) {
-        final DateTime now = DateTime.now();
+        final DateTime now = clock.getUTCNow();
 
         return new TossPaymentTransactionInfoPlugin(
                 kbPaymentId,
@@ -340,7 +410,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                 PaymentPluginStatus.PENDING,
                 e.getMessage(),
                 "NETWORK_ERROR",
-                null,
+                paymentKey, // Include paymentKey so we can check status later
                 null,
                 now,
                 now,
@@ -402,5 +472,33 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
         return errorCode.startsWith("FAILED_") && errorCode.contains("PROCESSING") ||
                errorCode.equals("PROVIDER_ERROR") ||
                errorCode.equals("COMMON_ERROR");
+    }
+
+    /**
+     * Build PaymentTransactionInfoPlugin from database record.
+     */
+    private PaymentTransactionInfoPlugin buildPaymentTransactionInfoFromRecord(final UUID kbPaymentId,
+                                                                                final TossResponsesRecord record) {
+        final PaymentPluginStatus status = mapTossStatusToKillBill(record.getTossPaymentStatus());
+        final DateTime createdDate = new DateTime(
+                record.getCreatedDate().atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli(),
+                org.joda.time.DateTimeZone.UTC
+        );
+
+        return new TossPaymentTransactionInfoPlugin(
+                kbPaymentId,
+                UUID.fromString(record.getKbPaymentTransactionId()),
+                TransactionType.valueOf(record.getTransactionType()),
+                record.getAmount(),
+                record.getCurrency() == null ? null : Currency.valueOf(record.getCurrency()),
+                status,
+                null, // gatewayError
+                null, // gatewayErrorCode
+                record.getPaymentKey(), // firstPaymentReferenceId
+                record.getOrderId(), // secondPaymentReferenceId
+                createdDate,
+                createdDate,
+                Collections.emptyList()
+        );
     }
 }

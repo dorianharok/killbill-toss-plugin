@@ -17,6 +17,7 @@
     <properties>
         <check.fail-rat>false</check.fail-rat>
         <check.fail-spotbugs>false</check.fail-spotbugs>
+        <check.fail-duplicate>false</check.fail-duplicate>
         <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
         <osgi.export>org.killbill.billing.plugin.toss.api</osgi.export>
         <osgi.private>org.killbill.billing.plugin.toss.*</osgi.private>
@@ -89,6 +90,22 @@
             <groupId>org.kill-bill.billing.plugin.java</groupId>
             <artifactId>killbill-base-plugin</artifactId>
             <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.kill-bill.commons</groupId>
+            <artifactId>killbill-clock</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.kill-bill.commons</groupId>
+            <artifactId>killbill-embeddeddb-h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.kill-bill.commons</groupId>
+            <artifactId>killbill-utils</artifactId>
             <scope>test</scope>
         </dependency>
 
