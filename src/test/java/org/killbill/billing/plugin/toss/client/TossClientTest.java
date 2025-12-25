@@ -29,7 +29,7 @@ public class TossClientTest {
         PaymentConfirmRequest request = new PaymentConfirmRequest("invalid_payment_key", "order_id_123", 1000L);
         
         try {
-            tossClient.confirmPayment(TEST_SECRET_KEY, request);
+            tossClient.confirmPayment(TEST_SECRET_KEY, request, "test-idempotency-key");
             Assert.fail("Should throw TossApplicationException");
         } catch (Exception e) {
             Assert.assertTrue(e instanceof TossApplicationException);
@@ -62,9 +62,9 @@ public class TossClientTest {
     
     @Test(groups = "integration")
     public void testCancelPayment_NotFound() {
-        PaymentCancelRequest request = new PaymentCancelRequest("Customer requested cancel", 1000L);
+        final PaymentCancelRequest request = new PaymentCancelRequest("Customer requested cancel", 1000L);
         try {
-            tossClient.cancelPayment(TEST_SECRET_KEY, "non_existent_payment_key", request);
+            tossClient.cancelPayment(TEST_SECRET_KEY, "non_existent_payment_key", request, "test-idempotency-key");
             Assert.fail("Should throw TossApplicationException");
         } catch (Exception e) {
              Assert.assertTrue(e instanceof TossApplicationException);

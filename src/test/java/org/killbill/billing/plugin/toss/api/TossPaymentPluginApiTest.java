@@ -136,7 +136,7 @@ public class TossPaymentPluginApiTest extends TestBase {
 
         // Mock Toss API response
         final TossPayment mockPayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenReturn(mockPayment);
 
         final List<PluginProperty> properties = ImmutableList.of(
@@ -194,7 +194,7 @@ public class TossPaymentPluginApiTest extends TestBase {
         // Mock 4xx error from Toss
         final TossError tossError = new TossError("INVALID_REQUEST", "Invalid request parameters");
         final TossApplicationException exception = new TossApplicationException(tossError, 400);
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(exception);
 
         final List<PluginProperty> properties = ImmutableList.of(
@@ -227,7 +227,7 @@ public class TossPaymentPluginApiTest extends TestBase {
         // Mock 5xx error from Toss
         final TossError tossError = new TossError("FAILED_INTERNAL_SYSTEM_PROCESSING", "Internal server error");
         final TossApplicationException exception = new TossApplicationException(tossError, 500);
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(exception);
 
         final List<PluginProperty> properties = ImmutableList.of(
@@ -256,7 +256,7 @@ public class TossPaymentPluginApiTest extends TestBase {
         final String paymentKey = "test_payment_key_123";
 
         // Mock network error
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
         final List<PluginProperty> properties = ImmutableList.of(
@@ -290,7 +290,7 @@ public class TossPaymentPluginApiTest extends TestBase {
 
         // Mock Toss API response
         final TossPayment mockPayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenReturn(mockPayment);
 
         final List<PluginProperty> properties = ImmutableList.of(
@@ -323,7 +323,7 @@ public class TossPaymentPluginApiTest extends TestBase {
         final String paymentKey = "test_payment_key_network_error";
 
         // Mock network error
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
         final List<PluginProperty> properties = ImmutableList.of(
@@ -377,7 +377,7 @@ public class TossPaymentPluginApiTest extends TestBase {
 
         // First, create a successful purchase (status = DONE = PROCESSED)
         final TossPayment mockPayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenReturn(mockPayment);
 
         final List<PluginProperty> properties = ImmutableList.of(
@@ -421,7 +421,7 @@ public class TossPaymentPluginApiTest extends TestBase {
         final String orderId = kbPaymentId.toString();
 
         // First, create a pending purchase (network error)
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
         final List<PluginProperty> properties = ImmutableList.of(
@@ -468,7 +468,7 @@ public class TossPaymentPluginApiTest extends TestBase {
         final String paymentKey = "test_payment_key_api_error";
 
         // Create a pending purchase
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
         final List<PluginProperty> properties = ImmutableList.of(
@@ -513,7 +513,7 @@ public class TossPaymentPluginApiTest extends TestBase {
         final String paymentKey = "test_payment_key_network";
 
         // Create a pending purchase
-        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any()))
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
         final List<PluginProperty> properties = ImmutableList.of(

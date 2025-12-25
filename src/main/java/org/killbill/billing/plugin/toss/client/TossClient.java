@@ -15,11 +15,12 @@ public interface TossClient {
      *
      * @param secretKey the secret key for authentication
      * @param request the payment confirmation request data
+     * @param idempotencyKey unique key to prevent duplicate confirmations (e.g., kbTransactionId)
      * @return the confirmed payment
      * @throws IOException if an I/O error occurs
      * @throws InterruptedException if the operation is interrupted
      */
-    TossPayment confirmPayment(String secretKey, PaymentConfirmRequest request) throws IOException, InterruptedException;
+    TossPayment confirmPayment(String secretKey, PaymentConfirmRequest request, String idempotencyKey) throws IOException, InterruptedException;
 
     /**
      * Cancels a payment.
@@ -27,11 +28,12 @@ public interface TossClient {
      * @param secretKey the secret key for authentication
      * @param paymentKey the unique key of the payment to cancel
      * @param request the cancel request data
-     * @return the confirmed payment information
+     * @param idempotencyKey unique key to prevent duplicate cancellations (e.g., kbTransactionId)
+     * @return the cancelled payment information
      * @throws IOException if an I/O error occurs
      * @throws InterruptedException if the operation is interrupted
      */
-    TossPayment cancelPayment(String secretKey, String paymentKey, PaymentCancelRequest request) throws IOException, InterruptedException;
+    TossPayment cancelPayment(String secretKey, String paymentKey, PaymentCancelRequest request, String idempotencyKey) throws IOException, InterruptedException;
 
     /**
      * Retrieves payment information by payment key.

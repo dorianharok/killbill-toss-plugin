@@ -48,16 +48,16 @@ public class TossClientImpl implements TossClient {
     }
 
     @Override
-    public TossPayment confirmPayment(String secretKey, PaymentConfirmRequest request) throws IOException, InterruptedException {
-        String requestBody = objectMapper.writeValueAsString(request);
-        HttpRequest httpRequest = buildRequest(secretKey, "/payments/confirm", "POST", requestBody);
+    public TossPayment confirmPayment(final String secretKey, final PaymentConfirmRequest request, final String idempotencyKey) throws IOException, InterruptedException {
+        final String requestBody = objectMapper.writeValueAsString(request);
+        final HttpRequest httpRequest = buildRequest(secretKey, "/payments/confirm", "POST", requestBody, idempotencyKey);
         return execute(httpRequest, TossPayment.class);
     }
 
     @Override
-    public TossPayment cancelPayment(String secretKey, String paymentKey, PaymentCancelRequest request) throws IOException, InterruptedException {
-        String requestBody = objectMapper.writeValueAsString(request);
-        HttpRequest httpRequest = buildRequest(secretKey, "/payments/" + paymentKey + "/cancel", "POST", requestBody);
+    public TossPayment cancelPayment(final String secretKey, final String paymentKey, final PaymentCancelRequest request, final String idempotencyKey) throws IOException, InterruptedException {
+        final String requestBody = objectMapper.writeValueAsString(request);
+        final HttpRequest httpRequest = buildRequest(secretKey, "/payments/" + paymentKey + "/cancel", "POST", requestBody, idempotencyKey);
         return execute(httpRequest, TossPayment.class);
     }
 
@@ -74,12 +74,20 @@ public class TossClientImpl implements TossClient {
         return execute(httpRequest, TossBilling.class);
     }
 
-    private HttpRequest buildRequest(String secretKey, String path, String method, String jsonBody) {
-        String authHeader = "Basic " + Base64.getEncoder().encodeToString((secretKey + ":").getBytes(StandardCharsets.UTF_8));
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
+    private HttpRequest buildRequest(final String secretKey, final String path, final String method, final String jsonBody) {
+        return buildRequest(secretKey, path, method, jsonBody, null);
+    }
+
+    private HttpRequest buildRequest(final String secretKey, final String path, final String method, final String jsonBody, final String idempotencyKey) {
+        final String authHeader = "Basic " + Base64.getEncoder().encodeToString((secretKey + ":").getBytes(StandardCharsets.UTF_8));
+        final HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path))
                 .header("Authorization", authHeader)
                 .header("Content-Type", "application/json");
+
+        if (idempotencyKey != null) {
+            builder.header("Idempotency-Key", idempotencyKey);
+        }
 
         if ("POST".equalsIgnoreCase(method)) {
             builder.POST(HttpRequest.BodyPublishers.ofString(jsonBody));
