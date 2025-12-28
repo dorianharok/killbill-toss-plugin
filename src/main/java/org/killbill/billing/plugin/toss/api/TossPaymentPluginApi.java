@@ -316,12 +316,25 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             // Call Toss API to get latest payment status
             final TossPayment tossPayment = tossClient.getPayment(secretKey, paymentKey);
 
+            // REFUND transaction requires special handling:
+            // If Toss status is DONE, it means the cancel request never reached Toss
+            // Keep PENDING so Janitor can retry the refund
+            if (lastTransaction.getTransactionType() == TransactionType.REFUND && "DONE".equals(tossPayment.getStatus())) {
+                logger.warn("REFUND transaction but Toss status is DONE - cancel request may not have reached Toss. Keeping PENDING for retry. paymentKey={}", paymentKey);
+                return transactions;
+            }
+
+            // For REFUND, use the original transaction amount (not totalAmount which is the purchase amount)
+            final BigDecimal amount = (lastTransaction.getTransactionType() == TransactionType.REFUND)
+                    ? lastTransaction.getAmount()
+                    : BigDecimal.valueOf(tossPayment.getTotalAmount());
+
             // Build response with CORRECT kbTransactionId
             final PaymentTransactionInfoPlugin response = buildPaymentTransactionInfo(
                     kbPaymentId,
-                    kbTransactionId, // Use existing transaction ID
+                    kbTransactionId,
                     lastTransaction.getTransactionType(),
-                    BigDecimal.valueOf(tossPayment.getTotalAmount()),
+                    amount,
                     Currency.valueOf(tossPayment.getCurrency()),
                     tossPayment
             );
@@ -329,7 +342,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             // Update database with latest status from Toss
             try {
                 dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, lastTransaction.getTransactionType(),
-                               BigDecimal.valueOf(tossPayment.getTotalAmount()),
+                               amount,
                                Currency.valueOf(tossPayment.getCurrency()), paymentKey, tossPayment, null, clock.getUTCNow(), context.getTenantId());
             } catch (final Exception dbError) {
                 logger.error("Failed to update payment status in database", dbError);
@@ -344,7 +357,39 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
 
         } catch (final TossApplicationException e) {
             logger.error("Toss API error in getPaymentInfo: code={}, message={}", e.getTossError().getCode(), e.getTossError().getMessage());
-            // TODO: Map to error status if needed
+            
+            final PaymentPluginStatus errorStatus = mapTossErrorToStatusForGetPaymentInfo(e);
+            
+            try {
+                dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, 
+                               lastTransaction.getTransactionType(),
+                               lastTransaction.getAmount(), 
+                               lastTransaction.getCurrency(), 
+                               paymentKey, null, e, clock.getUTCNow(), 
+                               context.getTenantId());
+            } catch (final Exception dbError) {
+                logger.error("Failed to save error response to database", dbError);
+            }
+            
+            final PaymentTransactionInfoPlugin errorResponse = new TossPaymentTransactionInfoPlugin(
+                    kbPaymentId,
+                    kbTransactionId,
+                    lastTransaction.getTransactionType(),
+                    lastTransaction.getAmount(),
+                    lastTransaction.getCurrency(),
+                    errorStatus,
+                    e.getTossError().getMessage(),
+                    e.getTossError().getCode(),
+                    paymentKey,
+                    null,
+                    clock.getUTCNow(),
+                    clock.getUTCNow(),
+                    Collections.emptyList()
+            );
+            
+            final List<PaymentTransactionInfoPlugin> updatedTransactions = new java.util.ArrayList<>(transactions);
+            updatedTransactions.set(transactions.size() - 1, errorResponse);
+            return updatedTransactions;
         } catch (final IOException | InterruptedException e) {
             logger.error("Network error in getPaymentInfo", e);
         }
@@ -544,6 +589,16 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
 
     /**
      * Map Toss payment status to Kill Bill status.
+     *
+     * <p>Mapping Rules:</p>
+     * <ul>
+     *   <li>READY, IN_PROGRESS, WAITING_FOR_DEPOSIT → PENDING (awaiting completion)</li>
+     *   <li>DONE, PARTIAL_CANCELED, CANCELED → PROCESSED (payment was successful)</li>
+     *   <li>ABORTED, EXPIRED → CANCELED (payment failed/stopped)</li>
+     * </ul>
+     *
+     * <p><b>CRITICAL:</b> CANCELED means the payment was successful but later refunded.
+     * The original purchase remains successful (PROCESSED), not CANCELED.</p>
      */
     private PaymentPluginStatus mapTossStatusToKillBill(final String tossStatus) {
         if (tossStatus == null) {
@@ -551,14 +606,18 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
         }
 
         switch (tossStatus) {
+            case "READY":
             case "IN_PROGRESS":
             case "WAITING_FOR_DEPOSIT":
                 return PaymentPluginStatus.PENDING;
-            case "PARTIAL_CANCELED":
             case "DONE":
-                return PaymentPluginStatus.PROCESSED;
+            case "PARTIAL_CANCELED":
             case "CANCELED":
+                // CANCELED means refunded - but the original payment was successful
+                return PaymentPluginStatus.PROCESSED;
             case "ABORTED":
+            case "EXPIRED":
+                // Payment failed or stopped before completion
                 return PaymentPluginStatus.CANCELED;
             default:
                 logger.warn("Unknown Toss status: {}, defaulting to PENDING", tossStatus);
@@ -567,7 +626,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
     }
 
     /**
-     * Map Toss error code to Kill Bill status (FR-07).
+     * Map Toss error code to Kill Bill status.
      * - 5xx errors → PENDING (retryable)
      * - 4xx errors → ERROR (not retryable)
      */
@@ -584,18 +643,46 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
         return PaymentPluginStatus.ERROR;
     }
 
-    /**
-     * Check if Toss error code is retryable (should return PENDING).
-     */
     private boolean isRetryableErrorCode(final String errorCode) {
         if (errorCode == null) {
             return false;
         }
 
-        // 5xx-like error codes (processing errors)
         return errorCode.startsWith("FAILED_") && errorCode.contains("PROCESSING") ||
                errorCode.equals("PROVIDER_ERROR") ||
                errorCode.equals("COMMON_ERROR");
+    }
+
+    private boolean isUnrecoverableErrorCode(final String errorCode) {
+        if (errorCode == null) {
+            return false;
+        }
+
+        switch (errorCode) {
+            case "NOT_FOUND_PAYMENT":
+            case "NOT_FOUND":
+            case "UNAUTHORIZED_KEY":
+            case "INCORRECT_BASIC_AUTH_FORMAT":
+            case "FORBIDDEN_REQUEST":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private PaymentPluginStatus mapTossErrorToStatusForGetPaymentInfo(final TossApplicationException e) {
+        final String errorCode = e.getTossError().getCode();
+        final int statusCode = e.getStatusCode();
+
+        if (statusCode == 404 || isUnrecoverableErrorCode(errorCode)) {
+            return PaymentPluginStatus.ERROR;
+        }
+
+        if (statusCode >= 500 || isRetryableErrorCode(errorCode)) {
+            return PaymentPluginStatus.PENDING;
+        }
+
+        return PaymentPluginStatus.PENDING;
     }
 
     /**
