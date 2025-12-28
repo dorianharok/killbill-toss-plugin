@@ -174,7 +174,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
 
         final TossResponsesRecord previousRecord;
         try {
-            previousRecord = dao.getResponseByPaymentId(kbPaymentId, context.getTenantId());
+            previousRecord = dao.getSuccessfulPurchaseResponse(kbPaymentId, context.getTenantId());
         } catch (final java.sql.SQLException e) {
             logger.error("Database error while retrieving original payment for refund", e);
             throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to retrieve original payment: " + e.getMessage());

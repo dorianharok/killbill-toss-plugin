@@ -39,10 +39,6 @@ import com.google.common.collect.ImmutableList;
 
 public class TossPaymentPluginApiTest extends TestBase {
 
-    // ========================================
-    // Unsupported Methods Tests (AC: 7)
-    // ========================================
-
     @Test(groups = "slow")
     public void testAuthorizePayment_ReturnsCANCELED() throws Exception {
         final UUID kbPaymentId = UUID.randomUUID();
@@ -134,7 +130,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final String orderId = kbPaymentId.toString();
         final BigDecimal amount = BigDecimal.valueOf(10000);
 
-        // Mock Toss API response
         final TossPayment mockPayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenReturn(mockPayment);
@@ -175,12 +170,11 @@ public class TossPaymentPluginApiTest extends TestBase {
                     account.getPaymentMethodId(),
                     BigDecimal.valueOf(10000),
                     Currency.KRW,
-                    Collections.emptyList(),  // Missing paymentKey
+                    Collections.emptyList(),
                     context
             );
             Assert.fail("Should throw PaymentPluginApiException for missing paymentKey");
         } catch (final PaymentPluginApiException e) {
-            // Expected - paymentKey is required
             Assert.assertNotNull(e);
         }
     }
@@ -191,7 +185,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final UUID kbTransactionId = UUID.randomUUID();
         final String paymentKey = "test_payment_key_123";
 
-        // Mock 4xx error from Toss
         final TossError tossError = new TossError("INVALID_REQUEST", "Invalid request parameters");
         final TossApplicationException exception = new TossApplicationException(tossError, 400);
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
@@ -224,7 +217,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final UUID kbTransactionId = UUID.randomUUID();
         final String paymentKey = "test_payment_key_123";
 
-        // Mock 5xx error from Toss
         final TossError tossError = new TossError("FAILED_INTERNAL_SYSTEM_PROCESSING", "Internal server error");
         final TossApplicationException exception = new TossApplicationException(tossError, 500);
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
@@ -255,7 +247,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final UUID kbTransactionId = UUID.randomUUID();
         final String paymentKey = "test_payment_key_123";
 
-        // Mock network error
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
@@ -277,7 +268,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         Assert.assertNotNull(result);
         Assert.assertEquals(result.getStatus(), PaymentPluginStatus.PENDING);
         Assert.assertEquals(result.getGatewayErrorCode(), "NETWORK_ERROR");
-        // paymentKey should be preserved for Janitor recovery
         Assert.assertEquals(result.getFirstPaymentReferenceId(), paymentKey);
     }
 
@@ -288,7 +278,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final String paymentKey = "test_payment_key_db";
         final String orderId = kbPaymentId.toString();
 
-        // Mock Toss API response
         final TossPayment mockPayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenReturn(mockPayment);
@@ -308,7 +297,6 @@ public class TossPaymentPluginApiTest extends TestBase {
                 context
         );
 
-        // Verify DB record
         final var dbRecord = dao.getResponseByPaymentId(kbPaymentId, context.getTenantId());
         Assert.assertNotNull(dbRecord);
         Assert.assertEquals(dbRecord.getPaymentKey(), paymentKey);
@@ -322,7 +310,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final UUID kbTransactionId = UUID.randomUUID();
         final String paymentKey = "test_payment_key_network_error";
 
-        // Mock network error
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
@@ -341,15 +328,10 @@ public class TossPaymentPluginApiTest extends TestBase {
                 context
         );
 
-        // Verify paymentKey is saved even on network error
         final var dbRecord = dao.getResponseByPaymentId(kbPaymentId, context.getTenantId());
-        Assert.assertNotNull(dbRecord, "DB record should exist even on network error");
-        Assert.assertEquals(dbRecord.getPaymentKey(), paymentKey, "paymentKey must be saved for Janitor recovery");
+        Assert.assertNotNull(dbRecord);
+        Assert.assertEquals(dbRecord.getPaymentKey(), paymentKey);
     }
-
-    // ========================================
-    // getPaymentInfo Tests
-    // ========================================
 
     @Test(groups = "slow")
     public void testGetPaymentInfo_NoTransactions_ReturnsEmptyList() throws Exception {
@@ -364,7 +346,6 @@ public class TossPaymentPluginApiTest extends TestBase {
 
         Assert.assertNotNull(result);
         Assert.assertTrue(result.isEmpty());
-        // Verify Toss API was NOT called
         Mockito.verify(tossClient, Mockito.never()).getPayment(Mockito.anyString(), Mockito.anyString());
     }
 
@@ -375,7 +356,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final String paymentKey = "test_payment_key_final";
         final String orderId = kbPaymentId.toString();
 
-        // First, create a successful purchase (status = DONE = PROCESSED)
         final TossPayment mockPayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenReturn(mockPayment);
@@ -395,10 +375,8 @@ public class TossPaymentPluginApiTest extends TestBase {
                 context
         );
 
-        // Reset mock to track new calls
         Mockito.reset(tossClient);
 
-        // Call getPaymentInfo
         final List<PaymentTransactionInfoPlugin> result = tossPaymentPluginApi.getPaymentInfo(
                 account.getId(),
                 kbPaymentId,
@@ -409,7 +387,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         Assert.assertNotNull(result);
         Assert.assertFalse(result.isEmpty());
         Assert.assertEquals(result.get(0).getStatus(), PaymentPluginStatus.PROCESSED);
-        // Verify Toss API was NOT called for final status
         Mockito.verify(tossClient, Mockito.never()).getPayment(Mockito.anyString(), Mockito.anyString());
     }
 
@@ -420,7 +397,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final String paymentKey = "test_payment_key_pending";
         final String orderId = kbPaymentId.toString();
 
-        // First, create a pending purchase (network error)
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
@@ -439,13 +415,11 @@ public class TossPaymentPluginApiTest extends TestBase {
                 context
         );
 
-        // Reset mock and set up getPayment to return success
         Mockito.reset(tossClient);
         final TossPayment updatedPayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
         Mockito.when(tossClient.getPayment(Mockito.anyString(), Mockito.eq(paymentKey)))
                .thenReturn(updatedPayment);
 
-        // Call getPaymentInfo - should sync with Toss
         final List<PaymentTransactionInfoPlugin> result = tossPaymentPluginApi.getPaymentInfo(
                 account.getId(),
                 kbPaymentId,
@@ -455,9 +429,7 @@ public class TossPaymentPluginApiTest extends TestBase {
 
         Assert.assertNotNull(result);
         Assert.assertFalse(result.isEmpty());
-        // Status should be updated to PROCESSED after sync
         Assert.assertEquals(result.get(result.size() - 1).getStatus(), PaymentPluginStatus.PROCESSED);
-        // Verify Toss API was called
         Mockito.verify(tossClient).getPayment(Mockito.anyString(), Mockito.eq(paymentKey));
     }
 
@@ -467,7 +439,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final UUID kbTransactionId = UUID.randomUUID();
         final String paymentKey = "test_payment_key_api_error";
 
-        // Create a pending purchase
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
@@ -486,13 +457,11 @@ public class TossPaymentPluginApiTest extends TestBase {
                 context
         );
 
-        // Reset and set up getPayment to throw error
         Mockito.reset(tossClient);
         final TossError tossError = new TossError("NOT_FOUND", "Payment not found");
         Mockito.when(tossClient.getPayment(Mockito.anyString(), Mockito.eq(paymentKey)))
                .thenThrow(new TossApplicationException(tossError, 404));
 
-        // Call getPaymentInfo - should return existing transactions
         final List<PaymentTransactionInfoPlugin> result = tossPaymentPluginApi.getPaymentInfo(
                 account.getId(),
                 kbPaymentId,
@@ -502,7 +471,6 @@ public class TossPaymentPluginApiTest extends TestBase {
 
         Assert.assertNotNull(result);
         Assert.assertFalse(result.isEmpty());
-        // Status should remain PENDING (not updated due to API error)
         Assert.assertEquals(result.get(result.size() - 1).getStatus(), PaymentPluginStatus.PENDING);
     }
 
@@ -512,7 +480,6 @@ public class TossPaymentPluginApiTest extends TestBase {
         final UUID kbTransactionId = UUID.randomUUID();
         final String paymentKey = "test_payment_key_network";
 
-        // Create a pending purchase
         Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
                .thenThrow(new IOException("Connection timeout"));
 
@@ -531,12 +498,10 @@ public class TossPaymentPluginApiTest extends TestBase {
                 context
         );
 
-        // Reset and set up getPayment to throw network error
         Mockito.reset(tossClient);
         Mockito.when(tossClient.getPayment(Mockito.anyString(), Mockito.eq(paymentKey)))
                .thenThrow(new IOException("Network unreachable"));
 
-        // Call getPaymentInfo - should return existing transactions
         final List<PaymentTransactionInfoPlugin> result = tossPaymentPluginApi.getPaymentInfo(
                 account.getId(),
                 kbPaymentId,
@@ -546,7 +511,6 @@ public class TossPaymentPluginApiTest extends TestBase {
 
         Assert.assertNotNull(result);
         Assert.assertFalse(result.isEmpty());
-        // Status should remain PENDING
         Assert.assertEquals(result.get(result.size() - 1).getStatus(), PaymentPluginStatus.PENDING);
     }
 
@@ -560,5 +524,347 @@ public class TossPaymentPluginApiTest extends TestBase {
         Mockito.when(payment.getCurrency()).thenReturn("KRW");
         Mockito.when(payment.getMethod()).thenReturn("CARD");
         return payment;
+    }
+
+    private TossPayment createMockCanceledTossPayment(final String paymentKey, final String orderId,
+                                                       final Long totalAmount, final String status,
+                                                       final Long cancelAmount, final String cancelTransactionKey) {
+        final TossPayment payment = createMockTossPayment(paymentKey, orderId, totalAmount, status);
+        
+        final TossPayment.TossCancel mockCancel = Mockito.mock(TossPayment.TossCancel.class);
+        Mockito.when(mockCancel.getCancelAmount()).thenReturn(cancelAmount);
+        Mockito.when(mockCancel.getTransactionKey()).thenReturn(cancelTransactionKey);
+        Mockito.when(mockCancel.getCancelReason()).thenReturn("고객 요청에 의한 환불");
+        
+        Mockito.when(payment.getCancels()).thenReturn(Collections.singletonList(mockCancel));
+        
+        return payment;
+    }
+
+    @Test(groups = "slow")
+    public void testRefundPayment_FullRefund_Success() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbPurchaseTransactionId = UUID.randomUUID();
+        final UUID kbRefundTransactionId = UUID.randomUUID();
+        final String paymentKey = "test_payment_key_full_refund";
+        final String orderId = kbPaymentId.toString();
+        final BigDecimal amount = BigDecimal.valueOf(10000);
+        final String cancelTransactionKey = "cancel_txn_key_001";
+
+        final TossPayment mockPurchasePayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockPurchasePayment);
+
+        final List<PluginProperty> purchaseProperties = ImmutableList.of(
+                new PluginProperty("paymentKey", paymentKey, false)
+        );
+
+        tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbPurchaseTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                purchaseProperties,
+                context
+        );
+
+        final TossPayment mockCanceledPayment = createMockCanceledTossPayment(
+                paymentKey, orderId, 10000L, "CANCELED", 10000L, cancelTransactionKey);
+        Mockito.when(tossClient.cancelPayment(Mockito.anyString(), Mockito.eq(paymentKey), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockCanceledPayment);
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.refundPayment(
+                account.getId(),
+                kbPaymentId,
+                kbRefundTransactionId,
+                account.getPaymentMethodId(),
+                null,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.CANCELED);
+        Assert.assertEquals(result.getFirstPaymentReferenceId(), paymentKey);
+        Assert.assertEquals(result.getSecondPaymentReferenceId(), cancelTransactionKey);
+        Assert.assertEquals(result.getKbPaymentId(), kbPaymentId);
+        Assert.assertEquals(result.getKbTransactionPaymentId(), kbRefundTransactionId);
+    }
+
+    @Test(groups = "slow")
+    public void testRefundPayment_PartialRefund_Success() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbPurchaseTransactionId = UUID.randomUUID();
+        final UUID kbRefundTransactionId = UUID.randomUUID();
+        final String paymentKey = "test_payment_key_partial_refund";
+        final String orderId = kbPaymentId.toString();
+        final BigDecimal purchaseAmount = BigDecimal.valueOf(10000);
+        final BigDecimal refundAmount = BigDecimal.valueOf(3000);
+        final String cancelTransactionKey = "cancel_txn_key_002";
+
+        final TossPayment mockPurchasePayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockPurchasePayment);
+
+        final List<PluginProperty> purchaseProperties = ImmutableList.of(
+                new PluginProperty("paymentKey", paymentKey, false)
+        );
+
+        tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbPurchaseTransactionId,
+                account.getPaymentMethodId(),
+                purchaseAmount,
+                Currency.KRW,
+                purchaseProperties,
+                context
+        );
+
+        final TossPayment mockCanceledPayment = createMockCanceledTossPayment(
+                paymentKey, orderId, 10000L, "PARTIAL_CANCELED", 3000L, cancelTransactionKey);
+        Mockito.when(tossClient.cancelPayment(Mockito.anyString(), Mockito.eq(paymentKey), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockCanceledPayment);
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.refundPayment(
+                account.getId(),
+                kbPaymentId,
+                kbRefundTransactionId,
+                account.getPaymentMethodId(),
+                refundAmount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.PROCESSED);
+        Assert.assertEquals(result.getFirstPaymentReferenceId(), paymentKey);
+        Assert.assertEquals(result.getSecondPaymentReferenceId(), cancelTransactionKey);
+        Assert.assertEquals(result.getAmount().longValue(), refundAmount.longValue());
+    }
+
+    @Test(groups = "slow")
+    public void testRefundPayment_AlreadyCanceled_ReturnsERROR() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbPurchaseTransactionId = UUID.randomUUID();
+        final UUID kbRefundTransactionId = UUID.randomUUID();
+        final String paymentKey = "test_payment_key_already_canceled";
+        final String orderId = kbPaymentId.toString();
+        final BigDecimal amount = BigDecimal.valueOf(10000);
+
+        final TossPayment mockPurchasePayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockPurchasePayment);
+
+        final List<PluginProperty> purchaseProperties = ImmutableList.of(
+                new PluginProperty("paymentKey", paymentKey, false)
+        );
+
+        tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbPurchaseTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                purchaseProperties,
+                context
+        );
+
+        final TossError tossError = new TossError("ALREADY_CANCELED_PAYMENT", "이미 취소된 결제입니다.");
+        final TossApplicationException exception = new TossApplicationException(tossError, 400);
+        Mockito.when(tossClient.cancelPayment(Mockito.anyString(), Mockito.eq(paymentKey), Mockito.any(), Mockito.anyString()))
+               .thenThrow(exception);
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.refundPayment(
+                account.getId(),
+                kbPaymentId,
+                kbRefundTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.ERROR);
+        Assert.assertEquals(result.getGatewayErrorCode(), "ALREADY_CANCELED_PAYMENT");
+        Assert.assertNotNull(result.getGatewayError());
+    }
+
+    @Test(groups = "slow")
+    public void testRefundPayment_ExceedMaxRefundAmount_ReturnsERROR() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbPurchaseTransactionId = UUID.randomUUID();
+        final UUID kbRefundTransactionId = UUID.randomUUID();
+        final String paymentKey = "test_payment_key_exceed_amount";
+        final String orderId = kbPaymentId.toString();
+        final BigDecimal purchaseAmount = BigDecimal.valueOf(10000);
+        final BigDecimal refundAmount = BigDecimal.valueOf(5000);
+
+        final TossPayment mockPurchasePayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockPurchasePayment);
+
+        final List<PluginProperty> purchaseProperties = ImmutableList.of(
+                new PluginProperty("paymentKey", paymentKey, false)
+        );
+
+        tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbPurchaseTransactionId,
+                account.getPaymentMethodId(),
+                purchaseAmount,
+                Currency.KRW,
+                purchaseProperties,
+                context
+        );
+
+        final TossError tossError = new TossError("EXCEED_MAX_REFUND_AMOUNT", "환불 가능한 금액을 초과했습니다.");
+        final TossApplicationException exception = new TossApplicationException(tossError, 400);
+        Mockito.when(tossClient.cancelPayment(Mockito.anyString(), Mockito.eq(paymentKey), Mockito.any(), Mockito.anyString()))
+               .thenThrow(exception);
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.refundPayment(
+                account.getId(),
+                kbPaymentId,
+                kbRefundTransactionId,
+                account.getPaymentMethodId(),
+                refundAmount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.ERROR);
+        Assert.assertEquals(result.getGatewayErrorCode(), "EXCEED_MAX_REFUND_AMOUNT");
+    }
+
+    @Test(groups = "slow")
+    public void testRefundPayment_NetworkError_ReturnsPENDING() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbPurchaseTransactionId = UUID.randomUUID();
+        final UUID kbRefundTransactionId = UUID.randomUUID();
+        final String paymentKey = "test_payment_key_network_error_refund";
+        final String orderId = kbPaymentId.toString();
+        final BigDecimal amount = BigDecimal.valueOf(10000);
+
+        final TossPayment mockPurchasePayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockPurchasePayment);
+
+        final List<PluginProperty> purchaseProperties = ImmutableList.of(
+                new PluginProperty("paymentKey", paymentKey, false)
+        );
+
+        tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbPurchaseTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                purchaseProperties,
+                context
+        );
+
+        Mockito.when(tossClient.cancelPayment(Mockito.anyString(), Mockito.eq(paymentKey), Mockito.any(), Mockito.anyString()))
+               .thenThrow(new IOException("Connection timeout"));
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.refundPayment(
+                account.getId(),
+                kbPaymentId,
+                kbRefundTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.PENDING);
+        Assert.assertEquals(result.getGatewayErrorCode(), "NETWORK_ERROR");
+        Assert.assertEquals(result.getFirstPaymentReferenceId(), paymentKey);
+    }
+
+    @Test(groups = "slow", expectedExceptions = PaymentPluginApiException.class)
+    public void testRefundPayment_OriginalPaymentNotFound_ThrowsException() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbRefundTransactionId = UUID.randomUUID();
+
+        tossPaymentPluginApi.refundPayment(
+                account.getId(),
+                kbPaymentId,
+                kbRefundTransactionId,
+                account.getPaymentMethodId(),
+                BigDecimal.valueOf(10000),
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+    }
+
+    @Test(groups = "slow")
+    public void testRefundPayment_SavesToDB() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbPurchaseTransactionId = UUID.randomUUID();
+        final UUID kbRefundTransactionId = UUID.randomUUID();
+        final String paymentKey = "test_payment_key_refund_db";
+        final String orderId = kbPaymentId.toString();
+        final BigDecimal amount = BigDecimal.valueOf(10000);
+        final String cancelTransactionKey = "cancel_txn_key_db";
+
+        // 1. Create successful purchase
+        final TossPayment mockPurchasePayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
+        Mockito.when(tossClient.confirmPayment(Mockito.anyString(), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockPurchasePayment);
+
+        final List<PluginProperty> purchaseProperties = ImmutableList.of(
+                new PluginProperty("paymentKey", paymentKey, false)
+        );
+
+        tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbPurchaseTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                purchaseProperties,
+                context
+        );
+
+        // 2. Mock cancel API
+        final TossPayment mockCanceledPayment = createMockCanceledTossPayment(
+                paymentKey, orderId, 10000L, "CANCELED", 10000L, cancelTransactionKey);
+        Mockito.when(tossClient.cancelPayment(Mockito.anyString(), Mockito.eq(paymentKey), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockCanceledPayment);
+
+        // 3. Call refundPayment
+        tossPaymentPluginApi.refundPayment(
+                account.getId(),
+                kbPaymentId,
+                kbRefundTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        // 4. Verify DB record - should have REFUND transaction type
+        final var dbRecord = dao.getResponseByPaymentId(kbPaymentId, context.getTenantId());
+        Assert.assertNotNull(dbRecord);
+        Assert.assertEquals(dbRecord.getTransactionType(), "REFUND");
+        Assert.assertEquals(dbRecord.getPaymentKey(), paymentKey);
+        Assert.assertEquals(dbRecord.getTossPaymentStatus(), "CANCELED");
     }
 }

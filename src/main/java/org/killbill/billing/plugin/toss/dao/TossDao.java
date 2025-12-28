@@ -194,6 +194,34 @@ public class TossDao extends PluginPaymentDao<TossResponsesRecord, TossResponses
     }
 
     /**
+     * Get the original successful PURCHASE response for a payment.
+     * Used by refund to validate against the original payment amount.
+     *
+     * @param kbPaymentId the Kill Bill payment ID
+     * @param kbTenantId the Kill Bill tenant ID
+     * @return the original PURCHASE TossResponsesRecord or null if not found
+     * @throws SQLException if a database error occurs
+     */
+    public TossResponsesRecord getSuccessfulPurchaseResponse(final UUID kbPaymentId,
+                                                             final UUID kbTenantId) throws SQLException {
+        return execute(dataSource.getConnection(),
+                       new WithConnectionCallback<TossResponsesRecord>() {
+                           @Override
+                           public TossResponsesRecord withConnection(final Connection conn) throws SQLException {
+                               return DSL.using(conn, dialect, settings)
+                                         .selectFrom(TOSS_RESPONSES)
+                                         .where(TOSS_RESPONSES.KB_PAYMENT_ID.equal(kbPaymentId.toString()))
+                                         .and(TOSS_RESPONSES.KB_TENANT_ID.equal(kbTenantId.toString()))
+                                         .and(TOSS_RESPONSES.TRANSACTION_TYPE.equal(TransactionType.PURCHASE.toString()))
+                                         .and(TOSS_RESPONSES.TOSS_PAYMENT_STATUS.in("DONE", "PARTIAL_CANCELED"))
+                                         .orderBy(TOSS_RESPONSES.RECORD_ID.desc())
+                                         .limit(1)
+                                         .fetchOne();
+                           }
+                       });
+    }
+
+    /**
      * Deserialize additional data from JSON string to Map.
      */
     public static Map fromAdditionalData(@Nullable final String additionalData) {
