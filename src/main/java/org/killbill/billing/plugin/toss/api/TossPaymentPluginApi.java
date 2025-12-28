@@ -23,8 +23,10 @@ import org.killbill.billing.plugin.api.PluginProperties;
 import org.killbill.billing.plugin.api.payment.PluginPaymentPluginApi;
 import org.killbill.billing.plugin.toss.client.TossClient;
 import org.killbill.billing.plugin.toss.client.exception.TossApplicationException;
+import org.killbill.billing.plugin.toss.client.model.BillingKeyRequest;
 import org.killbill.billing.plugin.toss.client.model.PaymentCancelRequest;
 import org.killbill.billing.plugin.toss.client.model.PaymentConfirmRequest;
+import org.killbill.billing.plugin.toss.client.model.TossBilling;
 import org.killbill.billing.plugin.toss.client.model.TossPayment;
 import org.killbill.billing.plugin.toss.core.TossConfigProperties;
 import org.killbill.billing.plugin.toss.core.TossConfigurationHandler;
@@ -405,26 +407,99 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
 
     @Override
     public void addPaymentMethod(final UUID kbAccountId, final UUID kbPaymentMethodId, final PaymentMethodPlugin paymentMethodProps, final boolean setDefault, final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
-        // TODO: Implement adding payment method
+        logger.info("addPaymentMethod called: kbAccountId={}, kbPaymentMethodId={}", kbAccountId, kbPaymentMethodId);
+
+        final String authKey = PluginProperties.findPluginPropertyValue("authKey", properties);
+        final String cardNumber = PluginProperties.findPluginPropertyValue("cardNumber", properties);
+
+        if (cardNumber != null) {
+            throw new PaymentPluginApiException("FORBIDDEN", "Raw card data billing key issuance requires special contract with Toss Payments");
+        }
+
+        if (authKey == null) {
+            throw new PaymentPluginApiException("MISSING_PARAMETER", "authKey is required for billing key issuance");
+        }
+
+        final String customerKey = kbPaymentMethodId.toString();
+
+        try {
+            final TossConfigProperties config = getConfigForTenant(context);
+            final String secretKey = config.getSecretKey();
+
+            final BillingKeyRequest request = new BillingKeyRequest(customerKey, authKey);
+            final TossBilling tossBilling = tossClient.issueBillingKey(secretKey, request);
+
+            dao.addPaymentMethod(kbAccountId, kbPaymentMethodId, setDefault, tossBilling, clock.getUTCNow(), context.getTenantId());
+
+            logger.info("addPaymentMethod succeeded: billingKey issued for kbPaymentMethodId={}", kbPaymentMethodId);
+
+        } catch (final TossApplicationException e) {
+            logger.error("Toss API error during billing key issuance: code={}, message={}", e.getTossError().getCode(), e.getTossError().getMessage());
+            throw new PaymentPluginApiException(e.getTossError().getCode(), e.getTossError().getMessage());
+
+        } catch (final java.io.IOException | InterruptedException e) {
+            logger.error("Network error during billing key issuance", e);
+            throw new PaymentPluginApiException("NETWORK_ERROR", "Failed to issue billing key: " + e.getMessage());
+
+        } catch (final java.sql.SQLException e) {
+            logger.error("Database error during billing key storage", e);
+            throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to store billing key: " + e.getMessage());
+        }
     }
 
     @Override
     public void deletePaymentMethod(final UUID kbAccountId, final UUID kbPaymentMethodId, final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
-        // TODO: Implement deleting payment method
+        logger.info("deletePaymentMethod called: kbPaymentMethodId={}", kbPaymentMethodId);
+
+        try {
+            dao.deletePaymentMethod(kbPaymentMethodId, context.getTenantId());
+            logger.info("deletePaymentMethod succeeded: kbPaymentMethodId={}", kbPaymentMethodId);
+        } catch (final java.sql.SQLException e) {
+            logger.error("Database error during payment method deletion", e);
+            throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to delete payment method: " + e.getMessage());
+        }
     }
 
     @Override
     public PaymentMethodPlugin getPaymentMethodDetail(final UUID kbAccountId, final UUID kbPaymentMethodId, final Iterable<PluginProperty> properties, final TenantContext context) throws PaymentPluginApiException {
-        return null;
+        try {
+            final TossPaymentMethodsRecord record = dao.getPaymentMethod(kbPaymentMethodId, context.getTenantId());
+            if (record == null) {
+                return null;
+            }
+            return TossPaymentMethodPlugin.build(record);
+        } catch (final java.sql.SQLException e) {
+            logger.error("Database error during payment method retrieval", e);
+            throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to retrieve payment method: " + e.getMessage());
+        }
     }
 
     @Override
     public void setDefaultPaymentMethod(final UUID kbAccountId, final UUID kbPaymentMethodId, final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
+        logger.info("setDefaultPaymentMethod called: kbPaymentMethodId={}", kbPaymentMethodId);
+
+        try {
+            dao.setDefaultPaymentMethod(kbPaymentMethodId, kbAccountId, context.getTenantId());
+            logger.info("setDefaultPaymentMethod succeeded: kbPaymentMethodId={}", kbPaymentMethodId);
+        } catch (final java.sql.SQLException e) {
+            logger.error("Database error during set default payment method", e);
+            throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to set default payment method: " + e.getMessage());
+        }
     }
 
     @Override
     public List<PaymentMethodInfoPlugin> getPaymentMethods(final UUID kbAccountId, final boolean refreshFromGateway, final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
-        return Collections.emptyList();
+        try {
+            final java.util.List<TossPaymentMethodsRecord> records = dao.getPaymentMethods(kbAccountId, context.getTenantId());
+            final java.util.List<PaymentMethodInfoPlugin> result = new java.util.ArrayList<>();
+            for (final TossPaymentMethodsRecord record : records) {
+                result.add(TossPaymentMethodInfoPlugin.build(record));
+            }
+            return result;
+        } catch (final java.sql.SQLException e) {
+            logger.error("Database error during payment methods retrieval", e);
+            throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to retrieve payment methods: " + e.getMessage());
+        }
     }
 
     @Override
@@ -456,17 +531,26 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
 
     @Override
     protected PaymentMethodPlugin buildPaymentMethodPlugin(TossPaymentMethodsRecord record) {
-        return null; // TODO: Implement
+        if (record == null) {
+            return null;
+        }
+        return TossPaymentMethodPlugin.build(record);
     }
 
     @Override
     protected PaymentMethodInfoPlugin buildPaymentMethodInfoPlugin(TossPaymentMethodsRecord record) {
-        return null; // TODO: Implement
+        if (record == null) {
+            return null;
+        }
+        return TossPaymentMethodInfoPlugin.build(record);
     }
 
     @Override
     protected String getPaymentMethodId(TossPaymentMethodsRecord record) {
-        return null; // TODO: Implement
+        if (record == null) {
+            return null;
+        }
+        return record.getKbPaymentMethodId();
     }
 
     /**
