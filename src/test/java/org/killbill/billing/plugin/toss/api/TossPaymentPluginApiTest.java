@@ -29,6 +29,7 @@ import org.killbill.billing.payment.plugin.api.PaymentPluginStatus;
 import org.killbill.billing.payment.plugin.api.PaymentTransactionInfoPlugin;
 import org.killbill.billing.plugin.toss.TestBase;
 import org.killbill.billing.plugin.toss.client.exception.TossApplicationException;
+import org.killbill.billing.plugin.toss.client.model.TossBilling;
 import org.killbill.billing.plugin.toss.client.model.TossError;
 import org.killbill.billing.plugin.toss.client.model.TossPayment;
 import org.mockito.Mockito;
@@ -1154,5 +1155,228 @@ public class TossPaymentPluginApiTest extends TestBase {
         Assert.assertFalse(result.isEmpty());
         final PaymentTransactionInfoPlugin lastTx = result.get(result.size() - 1);
         Assert.assertEquals(lastTx.getStatus(), PaymentPluginStatus.PROCESSED);
+    }
+
+    @Test(groups = "slow")
+    public void testPurchaseWithAuthKeyAndStorePaymentMethod_Success() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbTransactionId = UUID.randomUUID();
+        final String authKey = "test_auth_key_123";
+        final String billingKey = "billing_key_abc";
+        final String customerKey = account.getPaymentMethodId().toString();
+        final String paymentKey = "payment_key_xyz";
+        final String orderId = kbPaymentId.toString();
+        final BigDecimal amount = BigDecimal.valueOf(10000);
+
+        final TossBilling mockBilling = createMockTossBilling(billingKey, customerKey);
+        Mockito.when(tossClient.issueBillingKey(Mockito.anyString(), Mockito.any()))
+               .thenReturn(mockBilling);
+
+        final TossPayment mockPayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
+        Mockito.when(tossClient.executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockPayment);
+
+        final List<PluginProperty> properties = ImmutableList.of(
+                new PluginProperty("authKey", authKey, false),
+                new PluginProperty("storePaymentMethod", "true", false)
+        );
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                properties,
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.PROCESSED);
+        Assert.assertEquals(result.getFirstPaymentReferenceId(), paymentKey);
+
+        Mockito.verify(tossClient).issueBillingKey(Mockito.anyString(), Mockito.any());
+        Mockito.verify(tossClient).executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString());
+
+        final var paymentMethod = dao.getPaymentMethod(account.getPaymentMethodId(), context.getTenantId());
+        Assert.assertNotNull(paymentMethod);
+        Assert.assertEquals(paymentMethod.getBillingKey(), billingKey);
+        Assert.assertEquals(paymentMethod.getCustomerKey(), customerKey);
+    }
+
+    @Test(groups = "slow")
+    public void testPurchaseWithAuthKeyAndStorePaymentMethod_BillingKeyIssueFails_ReturnsError() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbTransactionId = UUID.randomUUID();
+        final String authKey = "test_auth_key_fail";
+        final BigDecimal amount = BigDecimal.valueOf(10000);
+
+        final TossError tossError = new TossError("INVALID_AUTH_KEY", "Invalid auth key");
+        final TossApplicationException exception = new TossApplicationException(tossError, 400);
+        Mockito.when(tossClient.issueBillingKey(Mockito.anyString(), Mockito.any()))
+               .thenThrow(exception);
+
+        final List<PluginProperty> properties = ImmutableList.of(
+                new PluginProperty("authKey", authKey, false),
+                new PluginProperty("storePaymentMethod", "true", false)
+        );
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                properties,
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.ERROR);
+        Assert.assertEquals(result.getGatewayErrorCode(), "INVALID_AUTH_KEY");
+
+        Mockito.verify(tossClient).issueBillingKey(Mockito.anyString(), Mockito.any());
+        Mockito.verify(tossClient, Mockito.never()).executeBillingKeyPayment(Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.anyString());
+    }
+
+    @Test(groups = "slow")
+    public void testPurchaseWithAuthKeyAndStorePaymentMethod_BillingKeySuccess_PaymentFails() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbTransactionId = UUID.randomUUID();
+        final String authKey = "test_auth_key_payment_fail";
+        final String billingKey = "billing_key_payment_fail";
+        final String customerKey = account.getPaymentMethodId().toString();
+        final BigDecimal amount = BigDecimal.valueOf(10000);
+
+        final TossBilling mockBilling = createMockTossBilling(billingKey, customerKey);
+        Mockito.when(tossClient.issueBillingKey(Mockito.anyString(), Mockito.any()))
+               .thenReturn(mockBilling);
+
+        final TossError tossError = new TossError("EXCEED_MAX_CARD_INSTALLMENT_PLAN", "Exceeds card limit");
+        final TossApplicationException exception = new TossApplicationException(tossError, 400);
+        Mockito.when(tossClient.executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString()))
+               .thenThrow(exception);
+
+        final List<PluginProperty> properties = ImmutableList.of(
+                new PluginProperty("authKey", authKey, false),
+                new PluginProperty("storePaymentMethod", "true", false)
+        );
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                properties,
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.ERROR);
+        Assert.assertEquals(result.getGatewayErrorCode(), "EXCEED_MAX_CARD_INSTALLMENT_PLAN");
+
+        final var paymentMethod = dao.getPaymentMethod(account.getPaymentMethodId(), context.getTenantId());
+        Assert.assertNotNull(paymentMethod, "Billing key should be saved even if payment fails");
+        Assert.assertEquals(paymentMethod.getBillingKey(), billingKey);
+    }
+
+    @Test(groups = "slow")
+    public void testPurchaseWithStoredBillingKey_Success() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbTransactionId = UUID.randomUUID();
+        final String billingKey = "stored_billing_key_001";
+        final String customerKey = account.getPaymentMethodId().toString();
+        final String paymentKey = "payment_key_stored";
+        final String orderId = kbPaymentId.toString();
+        final BigDecimal amount = BigDecimal.valueOf(5000);
+
+        final TossBilling mockBilling = createMockTossBilling(billingKey, customerKey);
+        dao.addPaymentMethod(account.getId(), account.getPaymentMethodId(), true, mockBilling, clock.getUTCNow(), context.getTenantId());
+
+        final TossPayment mockPayment = createMockTossPayment(paymentKey, orderId, 5000L, "DONE");
+        Mockito.when(tossClient.executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockPayment);
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.PROCESSED);
+        Assert.assertEquals(result.getFirstPaymentReferenceId(), paymentKey);
+
+        Mockito.verify(tossClient, Mockito.never()).issueBillingKey(Mockito.anyString(), Mockito.any());
+        Mockito.verify(tossClient).executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString());
+    }
+
+    @Test(groups = "slow", expectedExceptions = PaymentPluginApiException.class)
+    public void testPurchaseWithStoredBillingKey_NoBillingKey_ThrowsException() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbTransactionId = UUID.randomUUID();
+        final BigDecimal amount = BigDecimal.valueOf(5000);
+
+        tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+    }
+
+    @Test(groups = "slow")
+    public void testPurchaseWithStoredBillingKey_PaymentFails_ReturnsError() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbTransactionId = UUID.randomUUID();
+        final String billingKey = "stored_billing_key_fail";
+        final String customerKey = account.getPaymentMethodId().toString();
+        final BigDecimal amount = BigDecimal.valueOf(5000);
+
+        final TossBilling mockBilling = createMockTossBilling(billingKey, customerKey);
+        dao.addPaymentMethod(account.getId(), account.getPaymentMethodId(), true, mockBilling, clock.getUTCNow(), context.getTenantId());
+
+        final TossError tossError = new TossError("INVALID_CARD_NUMBER", "Card number is invalid");
+        final TossApplicationException exception = new TossApplicationException(tossError, 400);
+        Mockito.when(tossClient.executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString()))
+               .thenThrow(exception);
+
+        final PaymentTransactionInfoPlugin result = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(result.getStatus(), PaymentPluginStatus.ERROR);
+        Assert.assertEquals(result.getGatewayErrorCode(), "INVALID_CARD_NUMBER");
+    }
+
+    private TossBilling createMockTossBilling(final String billingKey, final String customerKey) {
+        final TossBilling billing = Mockito.mock(TossBilling.class);
+        Mockito.when(billing.getBillingKey()).thenReturn(billingKey);
+        Mockito.when(billing.getCustomerKey()).thenReturn(customerKey);
+        Mockito.when(billing.getMethod()).thenReturn("CARD");
+        Mockito.when(billing.getCardCompany()).thenReturn("삼성카드");
+        Mockito.when(billing.getCardNumber()).thenReturn("****-****-****-1234");
+        return billing;
     }
 }

@@ -23,6 +23,7 @@ import org.killbill.billing.plugin.api.PluginProperties;
 import org.killbill.billing.plugin.api.payment.PluginPaymentPluginApi;
 import org.killbill.billing.plugin.toss.client.TossClient;
 import org.killbill.billing.plugin.toss.client.exception.TossApplicationException;
+import org.killbill.billing.plugin.toss.client.model.BillingKeyPaymentRequest;
 import org.killbill.billing.plugin.toss.client.model.BillingKeyRequest;
 import org.killbill.billing.plugin.toss.client.model.PaymentCancelRequest;
 import org.killbill.billing.plugin.toss.client.model.PaymentConfirmRequest;
@@ -88,28 +89,112 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
     public PaymentTransactionInfoPlugin purchasePayment(final UUID kbAccountId, final UUID kbPaymentId, final UUID kbTransactionId, final UUID kbPaymentMethodId, final BigDecimal amount, final Currency currency, final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
         logger.info("purchasePayment called: kbPaymentId={}, amount={}, currency={}", kbPaymentId, amount, currency);
 
-        String paymentKey = null;
+        final String authKey = PluginProperties.findPluginPropertyValue("authKey", properties);
+        final String storePaymentMethodStr = PluginProperties.findPluginPropertyValue("storePaymentMethod", properties);
+        final boolean storePaymentMethod = "true".equalsIgnoreCase(storePaymentMethodStr);
+        final String paymentKey = PluginProperties.findPluginPropertyValue("paymentKey", properties);
+
+        if (authKey != null && storePaymentMethod) {
+            return handleAuthKeyWithBillingKeyFlow(kbAccountId, kbPaymentId, kbTransactionId, kbPaymentMethodId, amount, currency, authKey, properties, context);
+        }
+
+        if (paymentKey != null) {
+            return handleRegularConfirmFlow(kbAccountId, kbPaymentId, kbTransactionId, amount, currency, paymentKey, properties, context);
+        }
+
+        return handleStoredBillingKeyFlow(kbAccountId, kbPaymentId, kbTransactionId, kbPaymentMethodId, amount, currency, properties, context);
+    }
+
+    private PaymentTransactionInfoPlugin handleAuthKeyWithBillingKeyFlow(final UUID kbAccountId,
+                                                                          final UUID kbPaymentId,
+                                                                          final UUID kbTransactionId,
+                                                                          final UUID kbPaymentMethodId,
+                                                                          final BigDecimal amount,
+                                                                          final Currency currency,
+                                                                          final String authKey,
+                                                                          final Iterable<PluginProperty> properties,
+                                                                          final CallContext context) throws PaymentPluginApiException {
+        logger.info("handleAuthKeyWithBillingKeyFlow: issuing billing key and executing payment");
+
+        final TossConfigProperties config = getConfigForTenant(context);
+        final String secretKey = config.getSecretKey();
+        final String customerKey = kbPaymentMethodId.toString();
+
+        final TossBilling tossBilling;
         try {
-            // Extract Toss parameters from plugin properties
-            paymentKey = PluginProperties.findPluginPropertyValue("paymentKey", properties);
-            if (paymentKey == null) {
-                throw new PaymentPluginApiException("ERROR", "Missing required property: paymentKey");
-            }
+            final BillingKeyRequest billingKeyRequest = new BillingKeyRequest(customerKey, authKey);
+            tossBilling = tossClient.issueBillingKey(secretKey, billingKeyRequest);
+            logger.info("Billing key issued successfully: billingKey={}", maskSensitiveKey(tossBilling.getBillingKey()));
+        } catch (final TossApplicationException e) {
+            logger.error("Failed to issue billing key: code={}, message={}", e.getTossError().getCode(), e.getTossError().getMessage());
+            return buildErrorResponse(kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, e);
+        } catch (final IOException | InterruptedException e) {
+            logger.error("Network error during billing key issuance", e);
+            return buildPendingResponse(kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, null, e);
+        }
 
-            final String orderId = PluginProperties.getValue("orderId", kbPaymentId.toString(), properties);
+        try {
+            final boolean isDefault = "true".equalsIgnoreCase(PluginProperties.findPluginPropertyValue("isDefault", properties));
+            dao.addPaymentMethod(kbAccountId, kbPaymentMethodId, isDefault, tossBilling, clock.getUTCNow(), context.getTenantId());
+            logger.info("Billing key saved to payment method: kbPaymentMethodId={}", kbPaymentMethodId);
+        } catch (final java.sql.SQLException e) {
+            logger.error("Failed to save billing key to database", e);
+            throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to save billing key: " + e.getMessage());
+        }
 
-            final Long tossAmount = amount.longValue(); // Toss uses integer won (KRW), not cents
+        return executeBillingKeyPayment(kbAccountId, kbPaymentId, kbTransactionId, amount, currency, tossBilling.getBillingKey(), customerKey, properties, context);
+    }
 
-            // Get tenant configuration
-            final TossConfigProperties config = getConfigForTenant(context);
-            final String secretKey = config.getSecretKey();
+    private PaymentTransactionInfoPlugin handleStoredBillingKeyFlow(final UUID kbAccountId,
+                                                                     final UUID kbPaymentId,
+                                                                     final UUID kbTransactionId,
+                                                                     final UUID kbPaymentMethodId,
+                                                                     final BigDecimal amount,
+                                                                     final Currency currency,
+                                                                     final Iterable<PluginProperty> properties,
+                                                                     final CallContext context) throws PaymentPluginApiException {
+        logger.info("handleStoredBillingKeyFlow: using stored billing key from payment method");
 
-            // Call Toss API
-            final PaymentConfirmRequest request = new PaymentConfirmRequest(paymentKey, orderId, tossAmount);
+        final TossPaymentMethodsRecord paymentMethod;
+        try {
+            paymentMethod = dao.getPaymentMethod(kbPaymentMethodId, context.getTenantId());
+        } catch (final java.sql.SQLException e) {
+            logger.error("Database error while retrieving payment method", e);
+            throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to retrieve payment method: " + e.getMessage());
+        }
+
+        if (paymentMethod == null || paymentMethod.getBillingKey() == null) {
+            throw new PaymentPluginApiException("MISSING_BILLING_KEY", "No billing key found for payment method: " + kbPaymentMethodId);
+        }
+
+        final String billingKey = paymentMethod.getBillingKey();
+        final String customerKey = paymentMethod.getCustomerKey();
+
+        return executeBillingKeyPayment(kbAccountId, kbPaymentId, kbTransactionId, amount, currency, billingKey, customerKey, properties, context);
+    }
+
+    private PaymentTransactionInfoPlugin executeBillingKeyPayment(final UUID kbAccountId,
+                                                                   final UUID kbPaymentId,
+                                                                   final UUID kbTransactionId,
+                                                                   final BigDecimal amount,
+                                                                   final Currency currency,
+                                                                   final String billingKey,
+                                                                   final String customerKey,
+                                                                   final Iterable<PluginProperty> properties,
+                                                                   final CallContext context) throws PaymentPluginApiException {
+        final TossConfigProperties config = getConfigForTenant(context);
+        final String secretKey = config.getSecretKey();
+        final Long tossAmount = amount.longValue();
+        final String orderId = PluginProperties.getValue("orderId", kbPaymentId.toString(), properties);
+        final String orderName = PluginProperties.getValue("orderName", "Kill Bill Payment", properties);
+        final String customerEmail = PluginProperties.findPluginPropertyValue("customerEmail", properties);
+        final String customerName = PluginProperties.findPluginPropertyValue("customerName", properties);
+
+        try {
+            final BillingKeyPaymentRequest request = new BillingKeyPaymentRequest(tossAmount, orderId, orderName, customerKey, customerEmail, customerName);
             final String idempotencyKey = kbTransactionId.toString();
-            final TossPayment tossPayment = tossClient.confirmPayment(secretKey, request, idempotencyKey);
+            final TossPayment tossPayment = tossClient.executeBillingKeyPayment(secretKey, billingKey, request, idempotencyKey);
 
-            // Build success response
             final PaymentTransactionInfoPlugin response = buildPaymentTransactionInfo(
                     kbPaymentId,
                     kbTransactionId,
@@ -119,7 +204,72 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                     tossPayment
             );
 
-            // Save to database
+            try {
+                dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, tossPayment.getPaymentKey(), tossPayment, null, clock.getUTCNow(), context.getTenantId());
+            } catch (final Exception dbError) {
+                logger.error("Failed to save response to database", dbError);
+                throw new PaymentPluginApiException("Failed to save payment response to database: " + dbError.getMessage(), dbError);
+            }
+
+            logger.info("Billing key payment succeeded: paymentKey={}, status={}", tossPayment.getPaymentKey(), tossPayment.getStatus());
+            return response;
+
+        } catch (final TossApplicationException e) {
+            logger.error("Toss API error during billing key payment: code={}, message={}", e.getTossError().getCode(), e.getTossError().getMessage());
+            final PaymentTransactionInfoPlugin errorResponse = buildErrorResponse(kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, e);
+
+            try {
+                dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, null, null, e, clock.getUTCNow(), context.getTenantId());
+            } catch (final Exception dbError) {
+                logger.error("Failed to save error response to database", dbError);
+            }
+
+            return errorResponse;
+
+        } catch (final IOException | InterruptedException e) {
+            logger.error("Network error during billing key payment", e);
+            final PaymentTransactionInfoPlugin pendingResponse = buildPendingResponse(kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, null, e);
+
+            try {
+                dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, null, null, null, clock.getUTCNow(), context.getTenantId());
+            } catch (final Exception dbError) {
+                logger.error("Failed to save pending response to database", dbError);
+            }
+
+            return pendingResponse;
+        }
+    }
+
+    private PaymentTransactionInfoPlugin handleRegularConfirmFlow(final UUID kbAccountId,
+                                                                   final UUID kbPaymentId,
+                                                                   final UUID kbTransactionId,
+                                                                   final BigDecimal amount,
+                                                                   final Currency currency,
+                                                                   final String paymentKey,
+                                                                   final Iterable<PluginProperty> properties,
+                                                                   final CallContext context) throws PaymentPluginApiException {
+        logger.info("handleRegularConfirmFlow: confirming payment with paymentKey={}", paymentKey);
+
+        try {
+            final String orderId = PluginProperties.getValue("orderId", kbPaymentId.toString(), properties);
+            final Long tossAmount = amount.longValue();
+
+            final TossConfigProperties config = getConfigForTenant(context);
+            final String secretKey = config.getSecretKey();
+
+            final PaymentConfirmRequest request = new PaymentConfirmRequest(paymentKey, orderId, tossAmount);
+            final String idempotencyKey = kbTransactionId.toString();
+            final TossPayment tossPayment = tossClient.confirmPayment(secretKey, request, idempotencyKey);
+
+            final PaymentTransactionInfoPlugin response = buildPaymentTransactionInfo(
+                    kbPaymentId,
+                    kbTransactionId,
+                    TransactionType.PURCHASE,
+                    amount,
+                    currency,
+                    tossPayment
+            );
+
             try {
                 dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, paymentKey, tossPayment, null, clock.getUTCNow(), context.getTenantId());
             } catch (final Exception dbError) {
@@ -134,12 +284,10 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             logger.error("Toss API error: code={}, message={}", e.getTossError().getCode(), e.getTossError().getMessage());
             final PaymentTransactionInfoPlugin errorResponse = buildErrorResponse(kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, e);
 
-            // Save error to database
             try {
                 dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, paymentKey, null, e, clock.getUTCNow(), context.getTenantId());
             } catch (final Exception dbError) {
                 logger.error("Failed to save error response to database", dbError);
-                // Don't throw here - we already have the payment error to return
             }
 
             return errorResponse;
@@ -795,5 +943,12 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                 createdDate,
                 Collections.emptyList()
         );
+    }
+
+    private String maskSensitiveKey(final String key) {
+        if (key == null || key.length() <= 8) {
+            return "****";
+        }
+        return key.substring(0, 4) + "****" + key.substring(key.length() - 4);
     }
 }

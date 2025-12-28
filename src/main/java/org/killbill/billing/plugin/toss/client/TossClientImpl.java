@@ -2,6 +2,7 @@ package org.killbill.billing.plugin.toss.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.killbill.billing.plugin.toss.client.exception.TossApplicationException;
+import org.killbill.billing.plugin.toss.client.model.BillingKeyPaymentRequest;
 import org.killbill.billing.plugin.toss.client.model.BillingKeyRequest;
 import org.killbill.billing.plugin.toss.client.model.PaymentCancelRequest;
 import org.killbill.billing.plugin.toss.client.model.PaymentConfirmRequest;
@@ -72,6 +73,13 @@ public class TossClientImpl implements TossClient {
         String requestBody = objectMapper.writeValueAsString(request);
         HttpRequest httpRequest = buildRequest(secretKey, "/billing/authorizations/issue", "POST", requestBody);
         return execute(httpRequest, TossBilling.class);
+    }
+
+    @Override
+    public TossPayment executeBillingKeyPayment(final String secretKey, final String billingKey, final BillingKeyPaymentRequest request, final String idempotencyKey) throws IOException, InterruptedException {
+        final String requestBody = objectMapper.writeValueAsString(request);
+        final HttpRequest httpRequest = buildRequest(secretKey, "/billing/" + billingKey, "POST", requestBody, idempotencyKey);
+        return execute(httpRequest, TossPayment.class);
     }
 
     private HttpRequest buildRequest(final String secretKey, final String path, final String method, final String jsonBody) {
