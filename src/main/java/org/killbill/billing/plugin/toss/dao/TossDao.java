@@ -176,6 +176,33 @@ public class TossDao extends PluginPaymentDao<TossResponsesRecord, TossResponses
     }
 
     /**
+     * Get the response for a specific transaction.
+     * Used for idempotency check - if a transaction with this ID was already processed,
+     * return the existing result instead of processing again.
+     *
+     * @param kbTransactionId the Kill Bill payment transaction ID
+     * @param kbTenantId the Kill Bill tenant ID
+     * @return the TossResponsesRecord for this transaction or null if not found
+     * @throws SQLException if a database error occurs
+     */
+    public TossResponsesRecord getResponse(final UUID kbTransactionId,
+                                           final UUID kbTenantId) throws SQLException {
+        return execute(dataSource.getConnection(),
+                       new WithConnectionCallback<TossResponsesRecord>() {
+                           @Override
+                           public TossResponsesRecord withConnection(final Connection conn) throws SQLException {
+                               return DSL.using(conn, dialect, settings)
+                                         .selectFrom(TOSS_RESPONSES)
+                                         .where(TOSS_RESPONSES.KB_PAYMENT_TRANSACTION_ID.equal(kbTransactionId.toString()))
+                                         .and(TOSS_RESPONSES.KB_TENANT_ID.equal(kbTenantId.toString()))
+                                         .orderBy(TOSS_RESPONSES.RECORD_ID.desc())
+                                         .limit(1)
+                                         .fetchOne();
+                           }
+                       });
+    }
+
+    /**
      * Get the most recent response for a payment.
      *
      * @param kbPaymentId the Kill Bill payment ID

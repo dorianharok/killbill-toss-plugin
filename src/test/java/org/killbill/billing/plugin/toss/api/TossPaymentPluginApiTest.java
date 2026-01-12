@@ -1379,4 +1379,160 @@ public class TossPaymentPluginApiTest extends TestBase {
         Mockito.when(billing.getCardNumber()).thenReturn("****-****-****-1234");
         return billing;
     }
+
+    @Test(groups = "slow")
+    public void testRecurringChargeIdempotency_DuplicateCall_ReturnsExistingResult() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbTransactionId = UUID.randomUUID();
+        final String billingKey = "billing_key_idempotency";
+        final String customerKey = account.getPaymentMethodId().toString();
+        final String paymentKey = "payment_key_idempotency";
+        final String orderId = kbPaymentId.toString();
+        final BigDecimal amount = BigDecimal.valueOf(10000);
+
+        final TossBilling mockBilling = createMockTossBilling(billingKey, customerKey);
+        dao.addPaymentMethod(account.getId(), account.getPaymentMethodId(), true, mockBilling, clock.getUTCNow(), context.getTenantId());
+
+        final TossPayment mockPayment = createMockTossPayment(paymentKey, orderId, 10000L, "DONE");
+        Mockito.when(tossClient.executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString()))
+               .thenReturn(mockPayment);
+
+        final PaymentTransactionInfoPlugin firstResult = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(firstResult);
+        Assert.assertEquals(firstResult.getStatus(), PaymentPluginStatus.PROCESSED);
+
+        Mockito.verify(tossClient, Mockito.times(1)).executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString());
+
+        Mockito.reset(tossClient);
+
+        final PaymentTransactionInfoPlugin secondResult = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(secondResult);
+        Assert.assertEquals(secondResult.getStatus(), PaymentPluginStatus.PROCESSED);
+        Assert.assertEquals(secondResult.getFirstPaymentReferenceId(), paymentKey);
+        Assert.assertEquals(secondResult.getKbTransactionPaymentId(), kbTransactionId);
+
+        Mockito.verify(tossClient, Mockito.never()).executeBillingKeyPayment(Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.anyString());
+    }
+
+    @Test(groups = "slow")
+    public void testRecurringChargeIdempotency_ErrorResponse_ReturnsExistingError() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbTransactionId = UUID.randomUUID();
+        final String billingKey = "billing_key_idempotency_error";
+        final String customerKey = account.getPaymentMethodId().toString();
+        final BigDecimal amount = BigDecimal.valueOf(10000);
+
+        final TossBilling mockBilling = createMockTossBilling(billingKey, customerKey);
+        dao.addPaymentMethod(account.getId(), account.getPaymentMethodId(), true, mockBilling, clock.getUTCNow(), context.getTenantId());
+
+        final TossError tossError = new TossError("EXCEED_MAX_DAILY_PAYMENT_COUNT", "Daily payment limit exceeded");
+        final TossApplicationException exception = new TossApplicationException(tossError, 400);
+        Mockito.when(tossClient.executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString()))
+               .thenThrow(exception);
+
+        final PaymentTransactionInfoPlugin firstResult = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(firstResult);
+        Assert.assertEquals(firstResult.getStatus(), PaymentPluginStatus.ERROR);
+
+        Mockito.reset(tossClient);
+
+        final PaymentTransactionInfoPlugin secondResult = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertNotNull(secondResult);
+        Assert.assertEquals(secondResult.getKbTransactionPaymentId(), kbTransactionId);
+
+        Mockito.verify(tossClient, Mockito.never()).executeBillingKeyPayment(Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.anyString());
+    }
+
+    @Test(groups = "slow")
+    public void testRecurringChargeIdempotency_DifferentTransactionId_MakesNewCall() throws Exception {
+        final UUID kbPaymentId = UUID.randomUUID();
+        final UUID kbTransactionId1 = UUID.randomUUID();
+        final UUID kbTransactionId2 = UUID.randomUUID();
+        final String billingKey = "billing_key_different_tx";
+        final String customerKey = account.getPaymentMethodId().toString();
+        final String paymentKey1 = "payment_key_tx1";
+        final String paymentKey2 = "payment_key_tx2";
+        final BigDecimal amount = BigDecimal.valueOf(5000);
+
+        final TossBilling mockBilling = createMockTossBilling(billingKey, customerKey);
+        dao.addPaymentMethod(account.getId(), account.getPaymentMethodId(), true, mockBilling, clock.getUTCNow(), context.getTenantId());
+
+        final TossPayment mockPayment1 = createMockTossPayment(paymentKey1, kbPaymentId.toString(), 5000L, "DONE");
+        Mockito.when(tossClient.executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.eq(kbTransactionId1.toString())))
+               .thenReturn(mockPayment1);
+
+        final PaymentTransactionInfoPlugin firstResult = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId1,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertEquals(firstResult.getStatus(), PaymentPluginStatus.PROCESSED);
+        Assert.assertEquals(firstResult.getFirstPaymentReferenceId(), paymentKey1);
+
+        final TossPayment mockPayment2 = createMockTossPayment(paymentKey2, kbPaymentId.toString(), 5000L, "DONE");
+        Mockito.when(tossClient.executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.eq(kbTransactionId2.toString())))
+               .thenReturn(mockPayment2);
+
+        final PaymentTransactionInfoPlugin secondResult = tossPaymentPluginApi.purchasePayment(
+                account.getId(),
+                kbPaymentId,
+                kbTransactionId2,
+                account.getPaymentMethodId(),
+                amount,
+                Currency.KRW,
+                Collections.emptyList(),
+                context
+        );
+
+        Assert.assertEquals(secondResult.getStatus(), PaymentPluginStatus.PROCESSED);
+        Assert.assertEquals(secondResult.getFirstPaymentReferenceId(), paymentKey2);
+
+        Mockito.verify(tossClient, Mockito.times(2)).executeBillingKeyPayment(Mockito.anyString(), Mockito.eq(billingKey), Mockito.any(), Mockito.anyString());
+    }
 }

@@ -2,11 +2,16 @@ package org.killbill.billing.plugin.toss.api;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
 import org.joda.time.DateTime;
+import org.joda.time.DateTimeZone;
+import org.killbill.billing.account.api.Account;
+import org.killbill.billing.account.api.AccountApiException;
 import org.killbill.billing.catalog.api.Currency;
 import org.killbill.billing.osgi.libs.killbill.OSGIConfigPropertiesService;
 import org.killbill.billing.osgi.libs.killbill.OSGIKillbillAPI;
@@ -137,7 +142,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             final boolean isDefault = "true".equalsIgnoreCase(PluginProperties.findPluginPropertyValue("isDefault", properties));
             dao.addPaymentMethod(kbAccountId, kbPaymentMethodId, isDefault, tossBilling, clock.getUTCNow(), context.getTenantId());
             logger.info("Billing key saved to payment method: kbPaymentMethodId={}", kbPaymentMethodId);
-        } catch (final java.sql.SQLException e) {
+        } catch (final SQLException e) {
             logger.error("Failed to save billing key to database", e);
             throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to save billing key: " + e.getMessage());
         }
@@ -158,7 +163,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
         final TossPaymentMethodsRecord paymentMethod;
         try {
             paymentMethod = dao.getPaymentMethod(kbPaymentMethodId, context.getTenantId());
-        } catch (final java.sql.SQLException e) {
+        } catch (final SQLException e) {
             logger.error("Database error while retrieving payment method", e);
             throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to retrieve payment method: " + e.getMessage());
         }
@@ -182,13 +187,19 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                                                                    final String customerKey,
                                                                    final Iterable<PluginProperty> properties,
                                                                    final CallContext context) throws PaymentPluginApiException {
+        final PaymentTransactionInfoPlugin existingTransaction = checkIdempotency(kbPaymentId, kbTransactionId, context);
+        if (existingTransaction != null) {
+            return existingTransaction;
+        }
+
         final TossConfigProperties config = getConfigForTenant(context);
         final String secretKey = config.getSecretKey();
         final Long tossAmount = amount.longValue();
         final String orderId = PluginProperties.getValue("orderId", kbPaymentId.toString(), properties);
-        final String orderName = PluginProperties.getValue("orderName", "Kill Bill Payment", properties);
-        final String customerEmail = PluginProperties.findPluginPropertyValue("customerEmail", properties);
-        final String customerName = PluginProperties.findPluginPropertyValue("customerName", properties);
+        final String orderName = PluginProperties.getValue("orderName", "구독 결제", properties);
+
+        final String customerEmail = resolveCustomerEmail(kbAccountId, properties, context);
+        final String customerName = resolveCustomerName(kbAccountId, properties, context);
 
         try {
             final BillingKeyPaymentRequest request = new BillingKeyPaymentRequest(tossAmount, orderId, orderName, customerKey, customerEmail, customerName);
@@ -207,8 +218,8 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             try {
                 dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, tossPayment.getPaymentKey(), tossPayment, null, clock.getUTCNow(), context.getTenantId());
             } catch (final Exception dbError) {
-                logger.error("Failed to save response to database", dbError);
-                throw new PaymentPluginApiException("Failed to save payment response to database: " + dbError.getMessage(), dbError);
+                logger.error("CRITICAL: Payment succeeded but failed to save to DB. Manual intervention required. kbPaymentId={}, kbTransactionId={}, paymentKey={}", 
+                            kbPaymentId, kbTransactionId, tossPayment.getPaymentKey(), dbError);
             }
 
             logger.info("Billing key payment succeeded: paymentKey={}, status={}", tossPayment.getPaymentKey(), tossPayment.getStatus());
@@ -250,6 +261,11 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                                                                    final CallContext context) throws PaymentPluginApiException {
         logger.info("handleRegularConfirmFlow: confirming payment with paymentKey={}", paymentKey);
 
+        final PaymentTransactionInfoPlugin existingTransaction = checkIdempotency(kbPaymentId, kbTransactionId, context);
+        if (existingTransaction != null) {
+            return existingTransaction;
+        }
+
         try {
             final String orderId = PluginProperties.getValue("orderId", kbPaymentId.toString(), properties);
             final Long tossAmount = amount.longValue();
@@ -273,8 +289,8 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             try {
                 dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.PURCHASE, amount, currency, paymentKey, tossPayment, null, clock.getUTCNow(), context.getTenantId());
             } catch (final Exception dbError) {
-                logger.error("Failed to save response to database", dbError);
-                throw new PaymentPluginApiException("Failed to save payment response to database: " + dbError.getMessage(), dbError);
+                logger.error("CRITICAL: Payment succeeded but failed to save to DB. Manual intervention required. kbPaymentId={}, kbTransactionId={}, paymentKey={}",
+                            kbPaymentId, kbTransactionId, paymentKey, dbError);
             }
 
             logger.info("purchasePayment succeeded: paymentKey={}, status={}", paymentKey, tossPayment.getStatus());
@@ -325,7 +341,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
         final TossResponsesRecord previousRecord;
         try {
             previousRecord = dao.getSuccessfulPurchaseResponse(kbPaymentId, context.getTenantId());
-        } catch (final java.sql.SQLException e) {
+        } catch (final SQLException e) {
             logger.error("Database error while retrieving original payment for refund", e);
             throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to retrieve original payment: " + e.getMessage());
         }
@@ -355,7 +371,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
 
             try {
                 dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.REFUND, amount, currency, paymentKey, tossPayment, null, clock.getUTCNow(), context.getTenantId());
-            } catch (final java.sql.SQLException dbError) {
+            } catch (final SQLException dbError) {
                 logger.error("Failed to save refund response to database", dbError);
             }
 
@@ -368,7 +384,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
 
             try {
                 dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.REFUND, amount, currency, paymentKey, null, e, clock.getUTCNow(), context.getTenantId());
-            } catch (final java.sql.SQLException dbError) {
+            } catch (final SQLException dbError) {
                 logger.error("Failed to save refund error response to database", dbError);
             }
 
@@ -380,7 +396,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
 
             try {
                 dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, TransactionType.REFUND, amount, currency, paymentKey, null, null, clock.getUTCNow(), context.getTenantId());
-            } catch (final java.sql.SQLException dbError) {
+            } catch (final SQLException dbError) {
                 logger.error("Failed to save refund pending response to database", dbError);
             }
 
@@ -501,7 +517,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             logger.info("getPaymentInfo synced: paymentKey={}, status={}", paymentKey, tossPayment.getStatus());
             
             // Return mutable list with updated transaction
-            final List<PaymentTransactionInfoPlugin> updatedTransactions = new java.util.ArrayList<>(transactions);
+            final List<PaymentTransactionInfoPlugin> updatedTransactions = new ArrayList<>(transactions);
             updatedTransactions.set(transactions.size() - 1, response);
             return updatedTransactions;
 
@@ -537,7 +553,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                     Collections.emptyList()
             );
             
-            final List<PaymentTransactionInfoPlugin> updatedTransactions = new java.util.ArrayList<>(transactions);
+            final List<PaymentTransactionInfoPlugin> updatedTransactions = new ArrayList<>(transactions);
             updatedTransactions.set(transactions.size() - 1, errorResponse);
             return updatedTransactions;
         } catch (final IOException | InterruptedException e) {
@@ -589,7 +605,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             logger.error("Network error during billing key issuance", e);
             throw new PaymentPluginApiException("NETWORK_ERROR", "Failed to issue billing key: " + e.getMessage());
 
-        } catch (final java.sql.SQLException e) {
+        } catch (final SQLException e) {
             logger.error("Database error during billing key storage", e);
             throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to store billing key: " + e.getMessage());
         }
@@ -602,7 +618,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
         try {
             dao.deletePaymentMethod(kbPaymentMethodId, context.getTenantId());
             logger.info("deletePaymentMethod succeeded: kbPaymentMethodId={}", kbPaymentMethodId);
-        } catch (final java.sql.SQLException e) {
+        } catch (final SQLException e) {
             logger.error("Database error during payment method deletion", e);
             throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to delete payment method: " + e.getMessage());
         }
@@ -616,7 +632,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
                 return null;
             }
             return TossPaymentMethodPlugin.build(record);
-        } catch (final java.sql.SQLException e) {
+        } catch (final SQLException e) {
             logger.error("Database error during payment method retrieval", e);
             throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to retrieve payment method: " + e.getMessage());
         }
@@ -629,7 +645,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
         try {
             dao.setDefaultPaymentMethod(kbPaymentMethodId, kbAccountId, context.getTenantId());
             logger.info("setDefaultPaymentMethod succeeded: kbPaymentMethodId={}", kbPaymentMethodId);
-        } catch (final java.sql.SQLException e) {
+        } catch (final SQLException e) {
             logger.error("Database error during set default payment method", e);
             throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to set default payment method: " + e.getMessage());
         }
@@ -639,12 +655,12 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
     public List<PaymentMethodInfoPlugin> getPaymentMethods(final UUID kbAccountId, final boolean refreshFromGateway, final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
         try {
             final java.util.List<TossPaymentMethodsRecord> records = dao.getPaymentMethods(kbAccountId, context.getTenantId());
-            final java.util.List<PaymentMethodInfoPlugin> result = new java.util.ArrayList<>();
+            final java.util.List<PaymentMethodInfoPlugin> result = new ArrayList<>();
             for (final TossPaymentMethodsRecord record : records) {
                 result.add(TossPaymentMethodInfoPlugin.build(record));
             }
             return result;
-        } catch (final java.sql.SQLException e) {
+        } catch (final SQLException e) {
             logger.error("Database error during payment methods retrieval", e);
             throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to retrieve payment methods: " + e.getMessage());
         }
@@ -925,7 +941,7 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
         final PaymentPluginStatus status = mapTossStatusToKillBill(record.getTossPaymentStatus());
         final DateTime createdDate = new DateTime(
                 record.getCreatedDate().atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli(),
-                org.joda.time.DateTimeZone.UTC
+                DateTimeZone.UTC
         );
 
         return new TossPaymentTransactionInfoPlugin(
@@ -950,5 +966,55 @@ public class TossPaymentPluginApi extends PluginPaymentPluginApi<TossResponsesRe
             return "****";
         }
         return key.substring(0, 4) + "****" + key.substring(key.length() - 4);
+    }
+
+    private PaymentTransactionInfoPlugin checkIdempotency(final UUID kbPaymentId,
+                                                          final UUID kbTransactionId,
+                                                          final CallContext context) throws PaymentPluginApiException {
+        try {
+            final TossResponsesRecord existingResponse = dao.getResponse(kbTransactionId, context.getTenantId());
+            if (existingResponse != null) {
+                logger.info("Idempotency: Transaction already processed, returning existing result: kbTransactionId={}", kbTransactionId);
+                return buildPaymentTransactionInfoFromRecord(kbPaymentId, existingResponse);
+            }
+            return null;
+        } catch (final SQLException e) {
+            logger.error("Database error during idempotency check", e);
+            throw new PaymentPluginApiException("DATABASE_ERROR", "Failed to check idempotency: " + e.getMessage());
+        }
+    }
+
+    private String resolveCustomerEmail(final UUID kbAccountId,
+                                         final Iterable<PluginProperty> properties,
+                                         final CallContext context) {
+        final String fromProperties = PluginProperties.findPluginPropertyValue("customerEmail", properties);
+        if (fromProperties != null) {
+            return fromProperties;
+        }
+
+        try {
+            final Account account = killbillAPI.getAccountUserApi().getAccountById(kbAccountId, context);
+            return account.getEmail() != null ? account.getEmail() : "";
+        } catch (final AccountApiException e) {
+            logger.warn("Failed to retrieve account email, using empty value: kbAccountId={}", kbAccountId);
+            return "";
+        }
+    }
+
+    private String resolveCustomerName(final UUID kbAccountId,
+                                        final Iterable<PluginProperty> properties,
+                                        final CallContext context) {
+        final String fromProperties = PluginProperties.findPluginPropertyValue("customerName", properties);
+        if (fromProperties != null) {
+            return fromProperties;
+        }
+
+        try {
+            final Account account = killbillAPI.getAccountUserApi().getAccountById(kbAccountId, context);
+            return account.getName() != null ? account.getName() : "";
+        } catch (final AccountApiException e) {
+            logger.warn("Failed to retrieve account name, using empty value: kbAccountId={}", kbAccountId);
+            return "";
+        }
     }
 }
