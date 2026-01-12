@@ -2,6 +2,7 @@ package org.killbill.billing.plugin.toss.core;
 
 import java.util.Hashtable;
 
+import org.killbill.billing.osgi.api.Healthcheck;
 import org.killbill.billing.osgi.api.OSGIPluginProperties;
 import org.killbill.billing.osgi.libs.killbill.KillbillActivatorBase;
 import org.killbill.billing.payment.plugin.api.PaymentPluginApi;
@@ -10,7 +11,6 @@ import org.killbill.billing.plugin.toss.client.TossClient;
 import org.killbill.billing.plugin.toss.client.TossClientImpl;
 import org.killbill.billing.plugin.toss.dao.TossDao;
 import org.osgi.framework.BundleContext;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,25 +27,34 @@ public class TossActivator extends KillbillActivatorBase {
         super.start(context);
         logger.info("TossPluginActivator starting");
 
-        // Initialize configuration handler
         configurationHandler = new TossConfigurationHandler(PLUGIN_NAME, killbillAPI);
 
-        // Create configuration object explicitly and set as default
         final TossConfigProperties globalConfiguration =
             configurationHandler.createConfigurable(configProperties.getProperties());
         configurationHandler.setDefaultConfigurable(globalConfiguration);
 
         final TossDao dao = new TossDao(dataSource.getDataSource());
         final TossClient tossClient = new TossClientImpl();
-        final TossPaymentPluginApi api = new TossPaymentPluginApi(killbillAPI, configProperties, clock.getClock(), dao, configurationHandler, tossClient);
-        registerPaymentPluginApi(context, api);
 
-        logger.info("TossPluginActivator started with configuration handler");
+        final TossHealthcheck healthcheck = new TossHealthcheck(configurationHandler);
+        registerHealthcheck(context, healthcheck);
+
+        final TossPaymentPluginApi pluginApi = new TossPaymentPluginApi(
+            killbillAPI, configProperties, clock.getClock(), dao, configurationHandler, tossClient);
+        registerPaymentPluginApi(context, pluginApi);
+
+        logger.info("TossPluginActivator started successfully");
     }
 
     private void registerPaymentPluginApi(final BundleContext context, final PaymentPluginApi api) {
         final Hashtable<String, String> props = new Hashtable<String, String>();
         props.put(OSGIPluginProperties.PLUGIN_NAME_PROP, PLUGIN_NAME);
         registrar.registerService(context, PaymentPluginApi.class, api, props);
+    }
+
+    private void registerHealthcheck(final BundleContext context, final Healthcheck healthcheck) {
+        final Hashtable<String, String> props = new Hashtable<String, String>();
+        props.put(OSGIPluginProperties.PLUGIN_NAME_PROP, PLUGIN_NAME);
+        registrar.registerService(context, Healthcheck.class, healthcheck, props);
     }
 }
